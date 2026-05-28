@@ -97,6 +97,15 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["paused"])
         self.assertEqual(result["pause_reason"], "desktop_mode")
 
+    async def test_incoming_directory_uses_kdeck_receiver_directory(self):
+        backend = self.make_backend()
+
+        result = backend.get_incoming_directories()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["items"][0]["path"], str(backend.kde_receiver.incoming_dir))
+        self.assertEqual(result["items"][0]["managed_by"], "KDEck")
+
 
 if __name__ == "__main__":
     unittest.main()

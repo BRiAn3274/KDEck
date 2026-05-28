@@ -561,30 +561,18 @@ class KDEckBackend:
         }
 
     def get_incoming_directories(self) -> dict[str, Any]:
-        config_root = Path("/home/deck/.config/kdeconnect")
-        items = []
-        if config_root.exists():
-            for config_file in config_root.glob("*/share/config"):
-                incoming_path = self._read_ini_value(config_file, "incoming_path")
-                if incoming_path:
-                    device_id = config_file.parents[1].name
-                    items.append(
-                        {
-                            "device_id": device_id,
-                            "path": incoming_path.replace("%1", device_id),
-                            "config": str(config_file),
-                        }
-                    )
-        if not items:
-            items.append(
+        return {
+            "ok": True,
+            "items": [
                 {
                     "device_id": None,
-                    "path": "/home/deck/Downloads",
+                    "path": str(self.kde_receiver.incoming_dir),
                     "config": None,
                     "default": True,
+                    "managed_by": "KDEck",
                 }
-            )
-        return {"ok": True, "items": items}
+            ],
+        }
 
     async def get_deck_ips(self) -> dict[str, Any]:
         interfaces = await self._network_info()
