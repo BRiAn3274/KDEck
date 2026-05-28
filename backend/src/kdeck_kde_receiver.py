@@ -32,6 +32,11 @@ CAPABILITIES = [
 STARTUP_BROADCAST_DELAYS = (0, 1, 2, 5, 10, 15)
 BROADCAST_INTERVAL_SECONDS = 20
 RECENT_DISCOVERY_DIRECT_SECONDS = 180
+MAX_PACKET_BYTES = 64 * 1024
+MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
+MIN_FREE_SPACE_BYTES = 64 * 1024 * 1024
+EVENT_LOG_MAX_BYTES = 2 * 1024 * 1024
+EVENT_LOG_BACKUPS = 3
 IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "mihomo", "clash")
 ANDROID_DEVICE_TYPES = {"phone", "tablet"}
 
@@ -222,7 +227,7 @@ class KDEckKdeReceiver:
                 continue
             except OSError:
                 break
-            packet = self._decode_packet(data)
+            packet = self._decode_packet(data, context={"stage": "udp_discovery", "host": addr[0], "port": addr[1]})
             if packet.get("type") != PACKET_IDENTITY:
                 continue
             body = packet.get("body") or {}
@@ -556,9 +561,34 @@ class KDEckKdeReceiver:
             if not chunk:
                 break
             buffer += chunk
+            if len(buffer) > MAX_PACKET_BYTES and b"\n" not in buffer:
+                self._write_event(
+                    "packet_rejected",
+                    {
+                        "device_id": peer_id,
+                        "host": peer_host,
+                        "reason": "packet_too_large",
+                        "size": len(buffer),
+                        "max_size": MAX_PACKET_BYTES,
+                    },
+                )
+                buffer = b""
+                continue
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
-                packet = self._decode_packet(line + b"\n")
+                if len(line) + 1 > MAX_PACKET_BYTES:
+                    self._write_event(
+                        "packet_rejected",
+                        {
+                            "device_id": peer_id,
+                            "host": peer_host,
+                            "reason": "packet_too_large",
+                            "size": len(line) + 1,
+                            "max_size": MAX_PACKET_BYTES,
+                        },
+                    )
+                    continue
+                packet = self._decode_packet(line + b"\n", context={"stage": "tls_packet", "device_id": peer_id, "host": peer_host})
                 self._handle_packet(tls, peer_id, peer_host, packet, fingerprint)
 
     def _handle_packet(
@@ -589,7 +619,12 @@ class KDEckKdeReceiver:
             self._log("KDE receiver paired with %s", peer_id)
             self._write_event(
                 "paired",
-                {"device_id": peer_id, "fingerprint": fingerprint, "trust_mode": "fingerprint" if fingerprint else "device_id"},
+                {
+                    "device_id": peer_id,
+                    "fingerprint": fingerprint,
+                    "trust_mode": "fingerprint" if fingerprint else "device_id",
+                    "weak_trust_fallback": fingerprint is None,
+                },
             )
             return
         if not self._is_trusted_device(peer_id, fingerprint):
@@ -702,21 +737,31 @@ class KDEckKdeReceiver:
     def _read_plain_packet(self, conn: socket.socket) -> dict[str, Any]:
         conn.settimeout(5)
         data = b""
-        while b"\n" not in data and len(data) < 65536:
+        oversized = False
+        while b"\n" not in data and len(data) <= MAX_PACKET_BYTES:
             chunk = conn.recv(4096)
             if not chunk:
                 break
             data += chunk
-        return self._decode_packet(data)
+            oversized = len(data) > MAX_PACKET_BYTES
+        if oversized:
+            self._write_event("packet_rejected", {"stage": "plain_identity", "reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES})
+            return {}
+        return self._decode_packet(data, context={"stage": "plain_identity"})
 
     def _read_tls_packet(self, tls: ssl.SSLSocket) -> dict[str, Any]:
         data = b""
-        while b"\n" not in data and len(data) < 65536:
+        oversized = False
+        while b"\n" not in data and len(data) <= MAX_PACKET_BYTES:
             chunk = tls.recv(4096)
             if not chunk:
                 break
             data += chunk
-        return self._decode_packet(data)
+            oversized = len(data) > MAX_PACKET_BYTES
+        if oversized:
+            self._write_event("packet_rejected", {"stage": "secure_identity", "reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES})
+            return {}
+        return self._decode_packet(data, context={"stage": "secure_identity"})
 
     def _encode_packet(self, packet: dict[str, Any]) -> bytes:
         payload = {
@@ -726,16 +771,30 @@ class KDEckKdeReceiver:
         }
         return (json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
 
-    def _decode_packet(self, data: bytes) -> dict[str, Any]:
-        try:
-            return json.loads(data.decode("utf-8", errors="replace").strip())
-        except json.JSONDecodeError:
+    def _decode_packet(self, data: bytes, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        if len(data) > MAX_PACKET_BYTES:
+            self._write_event("packet_rejected", {"reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES, **(context or {})})
             return {}
+        try:
+            packet = json.loads(data.decode("utf-8", errors="replace").strip())
+        except json.JSONDecodeError:
+            self._write_event("packet_decode_failed", {"reason": "invalid_json", "size": len(data), **(context or {})})
+            return {}
+        if not isinstance(packet, dict):
+            self._write_event("packet_decode_failed", {"reason": "not_object", "size": len(data), **(context or {})})
+            return {}
+        if "type" in packet and "body" in packet and not isinstance(packet.get("body"), dict):
+            self._write_event("packet_decode_failed", {"reason": "body_not_object", "packet_type": packet.get("type"), **(context or {})})
+            return {}
+        return packet
 
     def _receive_share_request(self, peer_id: str, peer_host: str, packet: dict[str, Any]) -> None:
         body = packet.get("body") or {}
         transfer_info = packet.get("payloadTransferInfo") or {}
-        payload_size = int(packet.get("payloadSize") or 0)
+        payload_size = self._packet_payload_size(packet)
+        if payload_size is None:
+            self._write_event("share_ignored", {"device_id": peer_id, "reason": "invalid_payload_size", "payload_size": packet.get("payloadSize")})
+            return
         if body.get("text"):
             text = str(body.get("text") or "")
             self.on_clipboard(text, peer_id)
@@ -747,7 +806,17 @@ class KDEckKdeReceiver:
 
         filename = self._safe_filename(str(body.get("filename") or f"kdeck-{int(time.time())}"))
         destination = self._unique_destination(filename)
-        port = int(transfer_info["port"])
+        partial_destination = destination.with_name(f"{destination.name}.part")
+        port = self._payload_port(transfer_info)
+        if port is None:
+            self._write_event("share_ignored", {"device_id": peer_id, "file": filename, "reason": "invalid_payload_port", "port": transfer_info.get("port")})
+            return
+        if payload_size > MAX_FILE_BYTES:
+            self._record_file_failure(peer_id, filename, "file_too_large", expected=payload_size, max_size=MAX_FILE_BYTES)
+            return
+        if not self._has_enough_space(payload_size):
+            self._record_file_failure(peer_id, filename, "not_enough_space", expected=payload_size, min_free_space=MIN_FREE_SPACE_BYTES)
+            return
 
         try:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -766,7 +835,11 @@ class KDEckKdeReceiver:
                 tls.settimeout(30)
                 written = 0
                 self.incoming_dir.mkdir(parents=True, exist_ok=True)
-                with destination.open("wb") as output:
+                try:
+                    partial_destination.unlink()
+                except FileNotFoundError:
+                    pass
+                with partial_destination.open("wb") as output:
                     while written < payload_size:
                         chunk = tls.recv(min(65536, payload_size - written))
                         if not chunk:
@@ -775,22 +848,20 @@ class KDEckKdeReceiver:
                         written += len(chunk)
             if written != payload_size:
                 try:
-                    destination.unlink()
+                    partial_destination.unlink()
                 except OSError:
                     pass
-                self._write_event(
-                    "file_receive_failed",
-                    {"device_id": peer_id, "file": filename, "expected": payload_size, "written": written},
-                )
-                self._set_diagnostic(
-                    "last_file",
-                    {"device_id": peer_id, "file": filename, "status": "failed", "expected": payload_size, "written": written, "time": int(time.time())},
-                )
+                self._record_file_failure(peer_id, filename, "payload_incomplete", expected=payload_size, written=written)
                 return
+            partial_destination.replace(destination)
             file_event = {"device_id": peer_id, "file": destination.name, "path": str(destination), "size": written}
             self._set_diagnostic("last_file", {"status": "received", "time": int(time.time()), **file_event})
             self._write_event("file_received", file_event)
         except Exception as exc:
+            try:
+                partial_destination.unlink()
+            except OSError:
+                pass
             self._set_diagnostic(
                 "last_file",
                 {"device_id": peer_id, "file": filename, "status": "failed", "error": str(exc), "time": int(time.time())},
@@ -805,15 +876,41 @@ class KDEckKdeReceiver:
 
     def _unique_destination(self, filename: str) -> Path:
         destination = self.incoming_dir / filename
-        if not destination.exists():
+        if not destination.exists() and not destination.with_name(f"{destination.name}.part").exists():
             return destination
         stem = destination.stem
         suffix = destination.suffix
         for index in range(1, 1000):
             candidate = self.incoming_dir / f"{stem} ({index}){suffix}"
-            if not candidate.exists():
+            if not candidate.exists() and not candidate.with_name(f"{candidate.name}.part").exists():
                 return candidate
         return self.incoming_dir / f"{stem}-{int(time.time())}{suffix}"
+
+    def _packet_payload_size(self, packet: dict[str, Any]) -> Optional[int]:
+        try:
+            payload_size = int(packet.get("payloadSize") or 0)
+        except (TypeError, ValueError):
+            return None
+        return payload_size if payload_size >= 0 else None
+
+    def _payload_port(self, transfer_info: dict[str, Any]) -> Optional[int]:
+        try:
+            port = int(transfer_info.get("port"))
+        except (TypeError, ValueError):
+            return None
+        return port if 1 <= port <= 65535 else None
+
+    def _has_enough_space(self, payload_size: int) -> bool:
+        try:
+            usage = shutil.disk_usage(self.incoming_dir if self.incoming_dir.exists() else self.incoming_dir.parent)
+        except OSError:
+            return False
+        return usage.free >= payload_size + MIN_FREE_SPACE_BYTES
+
+    def _record_file_failure(self, peer_id: str, filename: str, reason: str, **details: Any) -> None:
+        event = {"device_id": peer_id, "file": filename, "error": reason, **details}
+        self._set_diagnostic("last_file", {"status": "failed", "time": int(time.time()), **event})
+        self._write_event("file_receive_failed", event)
 
     def _network_interfaces(self) -> list[dict[str, Any]]:
         interfaces: list[dict[str, Any]] = []
@@ -1035,11 +1132,35 @@ class KDEckKdeReceiver:
     def _write_event(self, event: str, details: dict[str, Any]) -> None:
         payload = {"time": int(time.time()), "event": event, **details}
         try:
+            self._rotate_event_log_if_needed()
             with self.event_log_path.open("a", encoding="utf-8") as log:
                 log.write(json.dumps(payload, ensure_ascii=False) + "\n")
         except OSError:
             pass
         self._log("KDE receiver event %s %s", event, details)
+
+    def _rotate_event_log_if_needed(self) -> None:
+        try:
+            if not self.event_log_path.exists() or self.event_log_path.stat().st_size < EVENT_LOG_MAX_BYTES:
+                return
+            for stale in self.event_log_path.parent.glob(f"{self.event_log_path.name}.*"):
+                try:
+                    index = int(stale.name.rsplit(".", 1)[1])
+                except (IndexError, ValueError):
+                    continue
+                if index > EVENT_LOG_BACKUPS:
+                    stale.unlink()
+            oldest = self.event_log_path.with_name(f"{self.event_log_path.name}.{EVENT_LOG_BACKUPS}")
+            if oldest.exists():
+                oldest.unlink()
+            for index in range(EVENT_LOG_BACKUPS - 1, 0, -1):
+                source = self.event_log_path.with_name(f"{self.event_log_path.name}.{index}")
+                target = self.event_log_path.with_name(f"{self.event_log_path.name}.{index + 1}")
+                if source.exists():
+                    source.replace(target)
+            self.event_log_path.replace(self.event_log_path.with_name(f"{self.event_log_path.name}.1"))
+        except OSError:
+            pass
 
     def _tail_events(self, limit: int) -> list[dict[str, Any]]:
         if not self.event_log_path.exists():

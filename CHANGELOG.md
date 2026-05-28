@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.7 - 2026-05-29
+
+- 不改变现有配对接受策略，先补强协议输入保护和回归测试。
+- packet 解码新增大小上限、JSON 结构校验和结构化拒绝事件，避免异常 packet 进入协议处理。
+- 文件接收新增 `payloadSize` 校验、2 GiB 上限、剩余空间检查和 `.part` 临时文件写入，完成后再替换到最终文件。
+- 文件接收失败事件细分为文件过大、空间不足、payload 不完整、无效 payload size 和 TLS/写入失败。
+- receiver 事件日志新增简单轮转，`receiver-events.jsonl` 超过 2 MiB 后保留 3 份历史文件。
+- 补充 packet 限制、文件保护、`.part` 避让、最近 discovery 定向回包和日志轮转测试。
+- 版本更新到 `0.3.7`。
+
 ## 0.3.6 - 2026-05-28
 
 - 检测到 Plasma 桌面模式时自动暂停 KDEck receiver，释放 KDE Connect LAN discovery 端口，避免干扰桌面模式官方 KDE Connect。

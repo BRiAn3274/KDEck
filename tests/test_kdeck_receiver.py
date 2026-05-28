@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import sys
@@ -6,7 +7,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend" / "src"))
 
-from kdeck_kde_receiver import KDEckKdeReceiver
+from kdeck_kde_receiver import EVENT_LOG_MAX_BYTES, KDEckKdeReceiver, MAX_FILE_BYTES, MAX_PACKET_BYTES
 
 
 class ReceiverSecurityTests(unittest.TestCase):
@@ -144,6 +145,87 @@ class ReceiverSecurityTests(unittest.TestCase):
             receiver._recent_discovery_targets(interfaces),
             [("192.0.2.144", "192.0.2.153", 50484), ("192.0.2.144", "192.0.2.153", 1716)],
         )
+
+    def test_decode_packet_rejects_oversized_packet(self):
+        receiver = self.make_receiver()
+
+        packet = receiver._decode_packet(b"x" * (MAX_PACKET_BYTES + 1), context={"stage": "test"})
+
+        self.assertEqual(packet, {})
+        self.assertEqual(receiver._tail_events(1)[0]["reason"], "packet_too_large")
+
+    def test_decode_packet_rejects_invalid_body_shape(self):
+        receiver = self.make_receiver()
+        payload = json.dumps({"type": "kdeconnect.clipboard", "body": "bad"}).encode("utf-8")
+
+        packet = receiver._decode_packet(payload, context={"stage": "test"})
+
+        self.assertEqual(packet, {})
+        self.assertEqual(receiver._tail_events(1)[0]["reason"], "body_not_object")
+
+    def test_share_request_rejects_invalid_payload_size(self):
+        receiver = self.make_receiver()
+
+        receiver._receive_share_request(
+            "phone",
+            "192.0.2.153",
+            {"body": {"filename": "bad.bin"}, "payloadTransferInfo": {"port": 1716}, "payloadSize": -1},
+        )
+
+        event = receiver._tail_events(1)[0]
+        self.assertEqual(event["event"], "share_ignored")
+        self.assertEqual(event["reason"], "invalid_payload_size")
+
+    def test_share_request_rejects_invalid_payload_port(self):
+        receiver = self.make_receiver()
+
+        receiver._receive_share_request(
+            "phone",
+            "192.0.2.153",
+            {"body": {"filename": "bad.bin"}, "payloadTransferInfo": {"port": 70000}, "payloadSize": 1},
+        )
+
+        event = receiver._tail_events(1)[0]
+        self.assertEqual(event["event"], "share_ignored")
+        self.assertEqual(event["reason"], "invalid_payload_port")
+
+    def test_share_request_rejects_oversized_file_without_connecting(self):
+        receiver = self.make_receiver()
+
+        with mock.patch("socket.create_connection") as connect:
+            receiver._receive_share_request(
+                "phone",
+                "192.0.2.153",
+                {"body": {"filename": "huge.bin"}, "payloadTransferInfo": {"port": 1716}, "payloadSize": MAX_FILE_BYTES + 1},
+            )
+
+        connect.assert_not_called()
+        event = receiver._tail_events(1)[0]
+        self.assertEqual(event["event"], "file_receive_failed")
+        self.assertEqual(event["error"], "file_too_large")
+
+    def test_unique_destination_avoids_existing_partial_file(self):
+        receiver = self.make_receiver()
+        receiver.incoming_dir.mkdir(parents=True)
+        (receiver.incoming_dir / "file.txt.part").write_text("partial", encoding="utf-8")
+
+        destination = receiver._unique_destination("file.txt")
+
+        self.assertEqual(destination.name, "file (1).txt")
+
+    def test_event_log_rotates_and_keeps_configured_backups(self):
+        receiver = self.make_receiver()
+        receiver.event_log_path.write_text("x" * EVENT_LOG_MAX_BYTES, encoding="utf-8")
+        for index in range(1, 5):
+            receiver.event_log_path.with_name(f"{receiver.event_log_path.name}.{index}").write_text(str(index), encoding="utf-8")
+
+        receiver._write_event("rotation_test", {})
+
+        self.assertTrue(receiver.event_log_path.exists())
+        self.assertTrue(receiver.event_log_path.with_name("receiver-events.jsonl.1").exists())
+        self.assertTrue(receiver.event_log_path.with_name("receiver-events.jsonl.2").exists())
+        self.assertTrue(receiver.event_log_path.with_name("receiver-events.jsonl.3").exists())
+        self.assertFalse(receiver.event_log_path.with_name("receiver-events.jsonl.4").exists())
 
 
 if __name__ == "__main__":
