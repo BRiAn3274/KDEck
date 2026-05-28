@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.6 - 2026-05-28
+
+- 检测到 Plasma 桌面模式时自动暂停 KDEck receiver，释放 KDE Connect LAN discovery 端口，避免干扰桌面模式官方 KDE Connect。
+- 离开桌面模式后，如插件仍处于期望接收状态，会自动恢复 KDEck receiver。
+- discovery 启动广播改为 `0 秒、1 秒、2 秒、5 秒、10 秒、15 秒`，常规广播间隔改为 20 秒。
+- 对最近发现过的设备增加短期定向 identity 回包，提升网络抖动或多网卡环境下的重新连接稳定性。
+- 版本更新到 `0.3.6`。
+
 ## 0.3.5 - 2026-05-28
 
 - 为 Decky 插件商店准备源码结构：后端模块迁移到 `backend/src`，根目录保留 Decky Python 入口 `main.py`。

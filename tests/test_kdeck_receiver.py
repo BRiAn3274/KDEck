@@ -126,6 +126,25 @@ class ReceiverSecurityTests(unittest.TestCase):
 
         self.assertEqual(receiver._safe_filename(r"..\bad/name?.txt"), "name.txt")
 
+    def test_recent_discovery_targets_include_source_port_and_udp_fallback(self):
+        receiver = self.make_receiver()
+        receiver._record_discovery_received(
+            ("192.0.2.153", 50484),
+            {
+                "deviceId": "phone",
+                "deviceName": "Phone",
+                "deviceType": "phone",
+                "tcpPort": 1716,
+                "protocolVersion": 8,
+            },
+        )
+        interfaces = [{"interface": "wlan0", "address": "192.0.2.144", "prefixlen": 24, "priority": 100}]
+
+        self.assertEqual(
+            receiver._recent_discovery_targets(interfaces),
+            [("192.0.2.144", "192.0.2.153", 50484), ("192.0.2.144", "192.0.2.153", 1716)],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@ import { FaLink } from "react-icons/fa";
 
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.3.5";
+const APP_VERSION = "0.3.6";
 
 type SteamClientLike = {
   System?: {
@@ -95,6 +95,8 @@ type ManagedKde = {
   udp_working?: boolean;
   tcp_working?: boolean;
   paired?: boolean;
+  paused?: boolean;
+  pause_reason?: string | null;
   discovered_devices?: ManagedDevice[];
   trusted_devices?: Record<string, unknown>;
   last_events?: ManagedEvent[];
@@ -362,7 +364,11 @@ function Content() {
   }, []);
 
   const receiverReady = summary.managed_kde?.running && summary.managed_kde?.udp_working && summary.managed_kde?.tcp_working;
-  const managedStatus = receiverReady ? "KDEck 接收中" : "KDEck 启动中";
+  const managedStatus = summary.managed_kde?.paused
+    ? "桌面模式暂停"
+    : receiverReady
+      ? "KDEck 接收中"
+      : "KDEck 启动中";
   const device = deviceState(summary.managed_kde);
   const connection = task || managedStatus;
 

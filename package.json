@@ -1,6 +1,6 @@
 {
   "name": "kdeck",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "packageManager": "pnpm@9.15.9",
   "description": "KDEck SteamOS game mode panel for KDE Connect clipboard and file transfer",
   "type": "module",

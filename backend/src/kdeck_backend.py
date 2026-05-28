@@ -7,6 +7,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import threading
 import time
 import zipfile
 from dataclasses import dataclass
@@ -77,6 +78,10 @@ class KDEckBackend:
         self.daemon_pid_path = self.runtime_dir / "kdeconnectd.pid"
         self.daemon_log_path = self.runtime_dir / "kdeconnectd.log"
         self.managed_kde_dir = self.settings_dir / "managed-kde"
+        self.managed_kde_desired = False
+        self.managed_kde_pause_reason: Optional[str] = None
+        self.mode_monitor_stop = threading.Event()
+        self.mode_monitor_thread: Optional[threading.Thread] = None
         self.kde_receiver = KDEckKdeReceiver(
             state_dir=self.managed_kde_dir,
             on_clipboard=self._receive_managed_clipboard,
@@ -154,13 +159,80 @@ class KDEckBackend:
         }
 
     def start_managed_kde(self) -> dict[str, Any]:
+        self.managed_kde_desired = True
+        self._ensure_mode_monitor()
+        if self._is_desktop_mode_active():
+            self.managed_kde_pause_reason = "desktop_mode"
+            self.kde_receiver.stop()
+            return self.get_managed_kde_status()
+        self.managed_kde_pause_reason = None
         return self.kde_receiver.start()
 
     def stop_managed_kde(self) -> dict[str, Any]:
+        self.managed_kde_desired = False
+        self._stop_mode_monitor()
+        self.managed_kde_pause_reason = None
         return self.kde_receiver.stop()
 
     def get_managed_kde_status(self) -> dict[str, Any]:
-        return self.kde_receiver.status()
+        status = self.kde_receiver.status()
+        desktop_mode = self._is_desktop_mode_active()
+        if desktop_mode and status.get("running"):
+            self.managed_kde_pause_reason = "desktop_mode"
+        status["desktop_mode_active"] = desktop_mode
+        status["desired"] = self.managed_kde_desired
+        status["paused"] = self.managed_kde_pause_reason == "desktop_mode"
+        status["pause_reason"] = self.managed_kde_pause_reason
+        return status
+
+    def _ensure_mode_monitor(self) -> None:
+        if self.mode_monitor_thread and self.mode_monitor_thread.is_alive():
+            return
+        self.mode_monitor_stop.clear()
+        self.mode_monitor_thread = threading.Thread(target=self._mode_monitor_loop, name="KDEckModeMonitor", daemon=True)
+        self.mode_monitor_thread.start()
+
+    def _stop_mode_monitor(self) -> None:
+        self.mode_monitor_stop.set()
+        if self.mode_monitor_thread and self.mode_monitor_thread.is_alive():
+            self.mode_monitor_thread.join(timeout=1.5)
+        self.mode_monitor_thread = None
+
+    def _mode_monitor_loop(self) -> None:
+        while not self.mode_monitor_stop.wait(5):
+            if not self.managed_kde_desired:
+                continue
+            desktop_mode = self._is_desktop_mode_active()
+            status = self.kde_receiver.status()
+            if desktop_mode:
+                if status.get("running"):
+                    if self.logger:
+                        self.logger.info("KDEck receiver paused because Plasma desktop mode is active")
+                    self.kde_receiver.stop()
+                self.managed_kde_pause_reason = "desktop_mode"
+                continue
+            if self.managed_kde_pause_reason == "desktop_mode":
+                self.managed_kde_pause_reason = None
+            if not status.get("running"):
+                if self.logger:
+                    self.logger.info("KDEck receiver resumed outside Plasma desktop mode")
+                self.kde_receiver.start()
+
+    def _is_desktop_mode_active(self) -> bool:
+        pgrep = shutil.which("pgrep")
+        if not pgrep:
+            return False
+        try:
+            result = subprocess.run(
+                [pgrep, "-u", DECK_USER, "-x", "plasmashell"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
 
     def _receive_managed_clipboard(self, text: str, device_id: Optional[str] = None) -> None:
         text = str(text or "")[:10000]

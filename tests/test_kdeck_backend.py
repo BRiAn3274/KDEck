@@ -84,6 +84,19 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["state"], "managed_daemon_stopped")
         run.assert_awaited_once_with(["kill", "12345"], timeout=5)
 
+    async def test_start_managed_kde_pauses_in_desktop_mode(self):
+        backend = self.make_backend()
+
+        with mock.patch.object(backend, "_is_desktop_mode_active", return_value=True), mock.patch.object(
+            backend.kde_receiver, "start"
+        ) as start, mock.patch.object(backend.kde_receiver, "stop", return_value={"ok": True, "running": False}):
+            result = backend.start_managed_kde()
+            backend.stop_managed_kde()
+
+        start.assert_not_called()
+        self.assertTrue(result["paused"])
+        self.assertEqual(result["pause_reason"], "desktop_mode")
+
 
 if __name__ == "__main__":
     unittest.main()

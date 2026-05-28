@@ -29,8 +29,9 @@ CAPABILITIES = [
     PACKET_CLIPBOARD_CONNECT,
     PACKET_SHARE_REQUEST,
 ]
-STARTUP_BROADCAST_DELAYS = (0, 2, 5, 10)
-BROADCAST_INTERVAL_SECONDS = 30
+STARTUP_BROADCAST_DELAYS = (0, 1, 2, 5, 10, 15)
+BROADCAST_INTERVAL_SECONDS = 20
+RECENT_DISCOVERY_DIRECT_SECONDS = 180
 IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "mihomo", "clash")
 ANDROID_DEVICE_TYPES = {"phone", "tablet"}
 
@@ -264,6 +265,7 @@ class KDEckKdeReceiver:
         payload = self._encode_packet(packet)
         interfaces = self._network_interfaces()
         targets = self._broadcast_targets(interfaces)
+        direct_targets = self._recent_discovery_targets(interfaces)
         sent = 0
         failures = []
         for source_ip, address in targets:
@@ -277,11 +279,25 @@ class KDEckKdeReceiver:
                     sent += 1
             except OSError as exc:
                 failures.append({"source": source_ip, "target": address, "error": str(exc)})
+        for source_ip, address, port in direct_targets:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                    udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    udp.settimeout(2)
+                    if source_ip:
+                        udp.bind((source_ip, 0))
+                    udp.sendto(payload, (address, port))
+                    sent += 1
+            except OSError as exc:
+                failures.append({"source": source_ip, "target": address, "port": port, "error": str(exc)})
         details = {
             "reason": reason,
             "sent": sent,
             "failures": failures[:5],
             "targets": [{"source": source, "target": target} for source, target in targets],
+            "direct_targets": [
+                {"source": source, "target": target, "port": port} for source, target, port in direct_targets
+            ],
             "paths": [
                 {"interface": item.get("interface"), "address": item.get("address"), "path_type": item.get("path_type")}
                 for item in interfaces
@@ -888,6 +904,31 @@ class KDEckKdeReceiver:
         if not targets:
             targets.append((None, "255.255.255.255"))
         return targets
+
+    def _recent_discovery_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str, int]]:
+        now = int(time.time())
+        targets: list[tuple[Optional[str], str, int]] = []
+        seen = set()
+        with self.state_lock:
+            devices = list((self.diagnostics.get("discovered_devices") or {}).values())
+        for device in devices:
+            host = device.get("host")
+            if not host:
+                continue
+            if now - int(device.get("last_seen") or 0) > RECENT_DISCOVERY_DIRECT_SECONDS:
+                continue
+            ports = [int(device.get("udp_source_port") or 0), UDP_PORT]
+            source_ips = self._source_ips_for_host(host, interfaces)
+            for port in ports:
+                if not (1 <= port <= 65535):
+                    continue
+                for source_ip in source_ips:
+                    key = (source_ip, host, port)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    targets.append((source_ip, host, port))
+        return targets[:16]
 
     def _source_ips_for_host(self, host: str, interfaces: list[dict[str, Any]]) -> list[Optional[str]]:
         matches: list[tuple[int, str]] = []
