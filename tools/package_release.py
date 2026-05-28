@@ -11,15 +11,14 @@ FILES = (
     "plugin.json",
     "package.json",
     "main.py",
-    "kdeck_backend.py",
-    "kdeck_kde_receiver.py",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
 )
-DIRECTORIES = ("dist", "assets", "defaults", "py_modules")
-EXCLUDED_SUFFIXES = (".map",)
+DIRECTORIES = ("dist", "assets", "defaults", "py_modules", "backend/src")
+EXCLUDED_DIR_NAMES = {"__pycache__"}
+EXCLUDED_SUFFIXES = (".map", ".pyc")
 
 
 def main() -> int:
@@ -46,6 +45,8 @@ def main() -> int:
                 continue
             for source in source_dir.rglob("*"):
                 if source.is_dir():
+                    continue
+                if any(part in EXCLUDED_DIR_NAMES for part in source.relative_to(ROOT).parts):
                     continue
                 if source.suffix in EXCLUDED_SUFFIXES:
                     continue

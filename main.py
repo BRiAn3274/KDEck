@@ -4,7 +4,8 @@ import sys
 
 import decky
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(PLUGIN_DIR, "backend", "src"))
 
 from kdeck_backend import KDEckBackend
 
