@@ -1,0 +1,11 @@
+{
+  "name": "KDEck",
+  "author": "RainsListener",
+  "flags": ["_root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["kde-connect", "clipboard", "file-transfer", "steam-deck"],
+    "description": "Receive KDE Connect clipboard text and files in SteamOS game mode.",
+    "image": "https://raw.githubusercontent.com/BRiAn3274/KDEck/main/assets/logo.png"
+  }
+}
