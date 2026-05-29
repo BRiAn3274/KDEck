@@ -1,0 +1,66 @@
+name: Test report
+description: Share a successful or partially successful KDEck test result.
+title: "[Test]: "
+labels: ["test-report"]
+body:
+  - type: input
+    id: kdeck_version
+    attributes:
+      label: KDEck version
+      placeholder: "0.4.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: deck_model
+    attributes:
+      label: Steam Deck model
+      options:
+        - Steam Deck OLED
+        - Steam Deck LCD
+        - Other / unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: steamos_channel
+    attributes:
+      label: SteamOS channel
+      options:
+        - Stable
+        - Beta
+        - Preview
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: phone_model
+    attributes:
+      label: Phone model
+  - type: input
+    id: phone_os
+    attributes:
+      label: Phone OS version
+  - type: input
+    id: kde_connect_version
+    attributes:
+      label: KDE Connect app version
+  - type: textarea
+    id: network
+    attributes:
+      label: Network environment
+      description: Same Wi-Fi, hotspot, guest Wi-Fi, AP isolation, VPN, overlay network, etc.
+  - type: checkboxes
+    id: results
+    attributes:
+      label: Test results
+      options:
+        - label: Phone discovered KDEck
+        - label: Pairing worked
+        - label: Clipboard receive worked
+        - label: File receive worked
+        - label: Desktop mode pause worked
+        - label: Game mode resume worked
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Any delay, retry, manual IP entry, or network detail that may help compare results.

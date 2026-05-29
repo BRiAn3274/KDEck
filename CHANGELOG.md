@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.2 - 2026-05-30
+
+- 新增 GitHub Issues 模板：Bug report 和 Test report，便于收集 Deck 型号、SteamOS 通道、手机系统、KDE Connect 版本、网络环境和日志包。
+- 剪贴板隐藏开发命令扩展为 `:kdeck help`、`:kdeck status`、`:kdeck devices`、`:kdeck reannounce`、`:kdeck logs`、`:kdeck export logs` 和 `:kdeck share logs`。
+- `:kdeck share logs` 会导出脱敏日志到 Downloads，并明确说明当前隔离 receiver 不直接反向发送日志到手机或电脑。
+- 诊断摘要补充最近 TCP 成功、TLS 成功/失败、配对、trusted-device reannounce 和文件 payload 错误信息。
+- receiver 启动前 30 秒增加 trusted-device reannounce 节奏；从桌面模式恢复到游戏模式后会立即触发一轮可信设备 reannounce。
+- README / README.zh-CN 补充隐藏命令用途、限制和诊断字段说明。
+- 版本更新到 `0.4.2`。
+
 ## 0.4.1 - 2026-05-30
 
 - GitHub 默认 `README.md` 改为英文主页，并新增 `README.zh-CN.md` 作为中文说明。

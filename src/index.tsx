@@ -10,8 +10,7 @@ import { FaLink } from "react-icons/fa";
 
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.4.1";
-const EXPORT_LOG_COMMANDS = new Set([":kdeck export logs", ":kdeck logs"]);
+const APP_VERSION = "0.4.2";
 
 const messages = {
   "zh-CN": {
@@ -32,6 +31,7 @@ const messages = {
     syncText: "同步文本框",
     receivedClipboard: "已收到手机剪贴板",
     exportLogs: "导出日志",
+    runCommand: "运行命令",
     logsExported: "日志已导出",
     receiveFile: "接收文件",
     file: "文件",
@@ -59,6 +59,7 @@ const messages = {
     syncText: "Sync Text",
     receivedClipboard: "Clipboard received from phone",
     exportLogs: "Export Logs",
+    runCommand: "Run Command",
     logsExported: "Logs exported",
     receiveFile: "Received Files",
     file: "File",
@@ -67,6 +68,7 @@ const messages = {
     fileReceived: "File received",
     unknownError: "Unknown error",
     errors: {
+      unknown_hidden_command: "Unknown hidden command",
       clipboard_read_failed: "Failed to read the current Deck clipboard",
       clipboard_write_failed: "Failed to write to the current Deck clipboard",
       directory_not_allowed: "This directory is not allowed",
@@ -107,6 +109,8 @@ declare global {
 
 type ApiResult = {
   ok?: boolean;
+  message?: string;
+  path?: string;
   error?: {
     code?: string;
     message?: string;
@@ -208,7 +212,7 @@ const getConnectionSummary = callable<[], ConnectionSummary>("get_connection_sum
 const setClipboard = callable<[text: string], ApiResult>("set_clipboard");
 const getNotebook = callable<[], Notebook>("get_notebook");
 const saveNotebook = callable<[text: string], Notebook>("save_notebook");
-const exportLogs = callable<[], ApiResult & { path?: string }>("export_logs");
+const runHiddenCommand = callable<[command: string], ApiResult>("run_hidden_command");
 const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
 
 const resultMessage = (result?: ApiResult | Notebook | ManagedKde) => {
@@ -431,16 +435,17 @@ function Content() {
   const handleClipboardEnter = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter") return;
     const command = clipboardTextRef.current.trim().toLowerCase();
-    if (!EXPORT_LOG_COMMANDS.has(command)) return;
+    if (!command.startsWith(":kdeck")) return;
     event.preventDefault();
     editingRef.current = false;
     skipNextBlurSaveRef.current = true;
     setText("");
-    run(text.exportLogs, async () => {
-      const result = await exportLogs();
-      if (result.ok && result.path) toast(`${text.logsExported}: ${result.path}`);
+    run(command.includes("logs") ? text.exportLogs : text.runCommand, async () => {
+      const result = await runHiddenCommand(command);
+      if (result.ok && result.message) toast(result.message);
+      if (result.ok && result.path && !result.message) toast(`${text.logsExported}: ${result.path}`);
       return result;
-    });
+    }, true);
   };
 
   useEffect(() => {

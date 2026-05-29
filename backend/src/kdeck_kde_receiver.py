@@ -29,7 +29,7 @@ CAPABILITIES = [
     PACKET_CLIPBOARD_CONNECT,
     PACKET_SHARE_REQUEST,
 ]
-STARTUP_BROADCAST_DELAYS = (0, 1, 2, 5, 10, 15)
+STARTUP_BROADCAST_DELAYS = (0, 1, 2, 5, 10, 15, 20, 25, 30)
 BROADCAST_INTERVAL_SECONDS = 20
 RECENT_DISCOVERY_DIRECT_SECONDS = 180
 TRUSTED_DEVICE_DIRECT_SECONDS = 7 * 24 * 60 * 60
@@ -78,6 +78,12 @@ class KDEckKdeReceiver:
             "last_discovery_received": None,
             "last_connect_attempt": None,
             "last_connect_error": None,
+            "last_tcp_success": None,
+            "last_tls_success": None,
+            "last_tls_error": None,
+            "last_pair": None,
+            "last_reannounce_targets": None,
+            "last_payload_error": None,
             "last_clipboard": None,
             "last_file": None,
             "interfaces": [],
@@ -132,6 +138,13 @@ class KDEckKdeReceiver:
         self._write_event("receiver_stopped", {})
         return {"ok": True, "running": False}
 
+    def reannounce_trusted_devices(self, reason: str = "manual_trusted_reannounce") -> dict[str, Any]:
+        if not self.tcp_port:
+            self._write_event("trusted_reannounce_skipped", {"reason": reason, "skip_reason": "tcp_not_ready"})
+            return {"ok": False, "reason": "tcp_not_ready"}
+        self._broadcast_identity(reason=reason)
+        return {"ok": True, "reason": reason}
+
     def status(self) -> dict[str, Any]:
         trusted = self._trusted_devices()
         valid_trusted = {
@@ -164,6 +177,12 @@ class KDEckKdeReceiver:
             "last_discovery_received": diagnostics.get("last_discovery_received"),
             "last_connect_attempt": diagnostics.get("last_connect_attempt"),
             "last_connect_error": diagnostics.get("last_connect_error"),
+            "last_tcp_success": diagnostics.get("last_tcp_success"),
+            "last_tls_success": diagnostics.get("last_tls_success"),
+            "last_tls_error": diagnostics.get("last_tls_error"),
+            "last_pair": diagnostics.get("last_pair"),
+            "last_reannounce_targets": diagnostics.get("last_reannounce_targets"),
+            "last_payload_error": diagnostics.get("last_payload_error"),
             "last_clipboard": diagnostics.get("last_clipboard"),
             "last_file": diagnostics.get("last_file"),
             "paired": bool(valid_trusted),
@@ -320,6 +339,7 @@ class KDEckKdeReceiver:
         }
         self._set_diagnostic("interfaces", interfaces)
         self._set_diagnostic("last_discovery_sent", {"time": int(time.time()), **details})
+        self._set_diagnostic("last_reannounce_targets", {"time": int(time.time()), "reason": reason, "direct_targets": details["direct_targets"]})
         self._write_event("discovery_sent", details)
 
     def _send_udp_identity(
@@ -374,6 +394,7 @@ class KDEckKdeReceiver:
     def _handle_incoming_tcp(self, conn: socket.socket, addr: tuple[str, int]) -> None:
         try:
             self._write_event("incoming_tcp_connected", {"host": addr[0], "port": addr[1]})
+            self._set_diagnostic("last_tcp_success", {"host": addr[0], "port": addr[1], "stage": "incoming", "time": int(time.time())})
             if self._is_local_host(addr[0]):
                 self._write_event("incoming_tcp_rejected", {"host": addr[0], "port": addr[1], "reason": "local_host"})
                 conn.close()
@@ -409,6 +430,7 @@ class KDEckKdeReceiver:
             tls_started = time.monotonic()
             self._write_event("incoming_tls_handshake_start", {"host": addr[0], "port": addr[1], "device_id": peer_id, "tls_mode": "client"})
             tls = context.wrap_socket(conn, server_hostname=peer_id, do_handshake_on_connect=True)
+            self._set_diagnostic("last_tls_success", {"host": addr[0], "port": addr[1], "device_id": peer_id, "stage": "incoming", "time": int(time.time())})
             self._write_event(
                 "incoming_tls_handshake_done",
                 {"host": addr[0], "port": addr[1], "device_id": peer_id, "tls_mode": "client", "duration_ms": int((time.monotonic() - tls_started) * 1000)},
@@ -418,6 +440,7 @@ class KDEckKdeReceiver:
             self._log("KDE receiver incoming connection failed from %s: %s", addr, exc)
             error = {"stage": "incoming_tcp", "host": addr[0], "port": addr[1], "error_type": type(exc).__name__, "message": str(exc), "time": int(time.time())}
             self._set_diagnostic("last_error", error)
+            self._set_diagnostic("last_tls_error", error)
             self._write_event("incoming_tcp_failed", error)
             try:
                 conn.close()
@@ -459,6 +482,7 @@ class KDEckKdeReceiver:
         try:
             tcp_started = time.monotonic()
             raw = socket.create_connection((host, port), timeout=5, source_address=(source_ip, 0) if source_ip else None)
+            self._set_diagnostic("last_tcp_success", {"host": host, "port": port, "device_id": peer_id, "source_ip": source_ip, "time": int(time.time())})
             self._write_event(
                 "peer_tcp_connected",
                 {"host": host, "port": port, "device_id": peer_id, "source_ip": source_ip, "duration_ms": int((time.monotonic() - tcp_started) * 1000)},
@@ -495,6 +519,7 @@ class KDEckKdeReceiver:
                 server_side=not use_tls_client,
                 do_handshake_on_connect=True,
             )
+            self._set_diagnostic("last_tls_success", {"host": host, "port": port, "device_id": peer_id, "source_ip": source_ip, "tls_mode": tls_mode, "stage": "peer_connect", "time": int(time.time())})
             self._write_event(
                 "peer_tls_handshake_done",
                 {
@@ -522,6 +547,7 @@ class KDEckKdeReceiver:
             }
             self._set_diagnostic("last_connect_error", error)
             self._set_diagnostic("last_error", {"stage": "peer_connect", **error})
+            self._set_diagnostic("last_tls_error", error)
             self._write_event("peer_connect_failed", error)
             if device_type in ANDROID_DEVICE_TYPES:
                 self._write_event(
@@ -621,6 +647,7 @@ class KDEckKdeReceiver:
                 trusted = self._trusted_devices()
                 trusted.pop(peer_id, None)
                 self._write_trusted_devices(trusted)
+                self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": False, "time": int(time.time())})
                 self._write_event("unpaired", {"device_id": peer_id})
                 return
             trusted = self._trusted_devices()
@@ -636,6 +663,7 @@ class KDEckKdeReceiver:
             self._write_trusted_devices(trusted)
             tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": True}}))
             self._log("KDE receiver paired with %s", peer_id)
+            self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": True, "time": int(time.time()), "trust_mode": "fingerprint" if fingerprint else "device_id"})
             self._write_event(
                 "paired",
                 {
@@ -847,9 +875,11 @@ class KDEckKdeReceiver:
             with context.wrap_socket(raw, server_hostname=peer_id) as tls:
                 payload_fingerprint = self._peer_fingerprint(tls)
                 if not self._is_trusted_device(peer_id, payload_fingerprint):
+                    payload_error = {"device_id": peer_id, "file": filename, "error": "untrusted_payload_certificate", "time": int(time.time())}
+                    self._set_diagnostic("last_payload_error", payload_error)
                     self._write_event(
                         "file_receive_failed",
-                        {"device_id": peer_id, "file": filename, "error": "untrusted_payload_certificate"},
+                        payload_error,
                     )
                     return
                 tls.settimeout(30)
@@ -886,6 +916,7 @@ class KDEckKdeReceiver:
                 "last_file",
                 {"device_id": peer_id, "file": filename, "status": "failed", "error": str(exc), "time": int(time.time())},
             )
+            self._set_diagnostic("last_payload_error", {"device_id": peer_id, "file": filename, "error": str(exc), "time": int(time.time())})
             self._write_event("file_receive_failed", {"device_id": peer_id, "file": filename, "error": str(exc)})
             self._log("KDE receiver file transfer failed: %s", exc)
 
@@ -930,6 +961,7 @@ class KDEckKdeReceiver:
     def _record_file_failure(self, peer_id: str, filename: str, reason: str, **details: Any) -> None:
         event = {"device_id": peer_id, "file": filename, "error": reason, **details}
         self._set_diagnostic("last_file", {"status": "failed", "time": int(time.time()), **event})
+        self._set_diagnostic("last_payload_error", {"time": int(time.time()), **event})
         self._write_event("file_receive_failed", event)
 
     def _network_interfaces(self) -> list[dict[str, Any]]:
@@ -1076,6 +1108,14 @@ class KDEckKdeReceiver:
                 "trusted_device_reannounce_target",
                 {"device_id": device_id, "host": host, "ports": ports, "target_count": len(targets)},
             )
+        self._set_diagnostic(
+            "last_reannounce_targets",
+            {
+                "time": int(time.time()),
+                "reason": "trusted_direct_targets",
+                "targets": [{"source": source, "target": target, "port": port} for source, target, port in targets[:16]],
+            },
+        )
         return targets[:16]
 
     def _merge_direct_targets(

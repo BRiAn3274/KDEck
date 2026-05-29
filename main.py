@@ -122,3 +122,6 @@ class Plugin:
 
     async def export_logs(self) -> dict:
         return self.backend.export_logs()
+
+    async def run_hidden_command(self, command: str) -> dict:
+        return self.backend.run_hidden_command(command)

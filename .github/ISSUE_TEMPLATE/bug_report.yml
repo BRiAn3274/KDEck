@@ -1,0 +1,81 @@
+name: Bug report
+description: Report a KDEck problem with enough device and network context.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: kdeck_version
+    attributes:
+      label: KDEck version
+      placeholder: "0.4.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: deck_model
+    attributes:
+      label: Steam Deck model
+      options:
+        - Steam Deck OLED
+        - Steam Deck LCD
+        - Other / unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: steamos_channel
+    attributes:
+      label: SteamOS channel
+      options:
+        - Stable
+        - Beta
+        - Preview
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: steamos_version
+    attributes:
+      label: SteamOS version
+      placeholder: "Example: 3.6.x"
+  - type: input
+    id: phone_model
+    attributes:
+      label: Phone model
+      placeholder: "Example: Pixel 8 / realme GT5 Pro"
+  - type: input
+    id: phone_os
+    attributes:
+      label: Phone OS version
+      placeholder: "Example: Android 15"
+  - type: input
+    id: kde_connect_version
+    attributes:
+      label: KDE Connect app version
+  - type: textarea
+    id: network
+    attributes:
+      label: Network environment
+      description: Same Wi-Fi, hotspot, guest Wi-Fi, AP isolation, VPN, EasyTier, ZeroTier, Tailscale, etc.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: What works?
+      options:
+        - label: Phone can discover KDEck
+        - label: Phone can pair with KDEck
+        - label: Clipboard receive works
+        - label: File receive works
+        - label: Desktop mode pause / game mode resume works
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+      description: Describe the failure and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: If possible, run `:kdeck logs` in the KDEck clipboard field and attach the exported zip from Downloads.

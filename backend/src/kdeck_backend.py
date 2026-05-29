@@ -168,7 +168,10 @@ class KDEckBackend:
             self.kde_receiver.stop()
             return self.get_managed_kde_status()
         self.managed_kde_pause_reason = None
-        return self.kde_receiver.start()
+        result = self.kde_receiver.start()
+        if result.get("running"):
+            self.kde_receiver.reannounce_trusted_devices("start_managed_kde")
+        return result
 
     def stop_managed_kde(self) -> dict[str, Any]:
         self.managed_kde_desired = False
@@ -197,6 +200,11 @@ class KDEckBackend:
             "paired": bool(status.get("paired")),
             "recent_discovery": bool(status.get("last_discovery_received")),
             "recent_connect_attempt": bool(status.get("last_connect_attempt")),
+            "recent_tcp_success": bool(status.get("last_tcp_success")),
+            "recent_tls_success": bool(status.get("last_tls_success")),
+            "recent_pair": bool(status.get("last_pair")),
+            "recent_reannounce": bool(status.get("last_reannounce_targets")),
+            "recent_payload_error": bool(status.get("last_payload_error")),
             "recent_clipboard": bool(status.get("last_clipboard")),
             "recent_file": bool(status.get("last_file")),
         }
@@ -224,7 +232,50 @@ class KDEckBackend:
             "checks": checks,
             "last_error": status.get("last_error"),
             "last_connect_error": status.get("last_connect_error"),
+            "last_discovery_received": status.get("last_discovery_received"),
+            "last_tcp_success": status.get("last_tcp_success"),
+            "last_tls_success": status.get("last_tls_success"),
+            "last_tls_error": status.get("last_tls_error"),
+            "last_pair": status.get("last_pair"),
+            "last_reannounce_targets": status.get("last_reannounce_targets"),
+            "last_payload_error": status.get("last_payload_error"),
         }
+
+    def run_hidden_command(self, command: str) -> dict[str, Any]:
+        normalized = " ".join(str(command or "").strip().lower().split())
+        commands = {
+            ":kdeck help": "List hidden commands.",
+            ":kdeck status": "Show receiver diagnostic summary.",
+            ":kdeck devices": "Show discovered and trusted device counts.",
+            ":kdeck reannounce": "Send an immediate trusted-device reannounce.",
+            ":kdeck logs": "Export redacted logs to Downloads.",
+            ":kdeck export logs": "Export redacted logs to Downloads.",
+            ":kdeck share logs": "Export logs and explain why direct reverse sending is not used.",
+        }
+        if normalized == ":kdeck help":
+            return {"ok": True, "message": "\n".join(f"{name} - {description}" for name, description in commands.items()), "commands": commands}
+        if normalized in (":kdeck logs", ":kdeck export logs", ":kdeck share logs"):
+            result = self.export_logs()
+            if normalized == ":kdeck share logs":
+                result["message"] = "Logs exported to Downloads. Direct reverse sending is not supported by KDEck's isolated receiver."
+            else:
+                result["message"] = f"Logs exported: {result.get('path')}"
+            return result
+        if normalized == ":kdeck status":
+            status = self.get_managed_kde_status()
+            summary = status.get("diagnostic_summary") or {}
+            return {"ok": True, "message": summary.get("message") or "Status ready.", "status": status}
+        if normalized == ":kdeck devices":
+            status = self.get_managed_kde_status()
+            discovered = status.get("discovered_devices") or []
+            trusted = status.get("trusted_devices") or {}
+            message = f"Discovered devices: {len(discovered)}; trusted devices: {len(trusted)}."
+            return {"ok": True, "message": message, "discovered_devices": discovered, "trusted_devices": trusted}
+        if normalized == ":kdeck reannounce":
+            result = self.kde_receiver.reannounce_trusted_devices("hidden_command")
+            result["message"] = "Trusted-device reannounce sent." if result.get("ok") else "Receiver TCP listener is not ready."
+            return result
+        return self._error("unknown_hidden_command", "未知隐藏命令。", command=command)
 
     def _ensure_mode_monitor(self) -> None:
         if self.mode_monitor_thread and self.mode_monitor_thread.is_alive():
@@ -257,7 +308,9 @@ class KDEckBackend:
             if not status.get("running"):
                 if self.logger:
                     self.logger.info("KDEck receiver resumed outside Plasma desktop mode")
-                self.kde_receiver.start()
+                resumed = self.kde_receiver.start()
+                if resumed.get("running"):
+                    self.kde_receiver.reannounce_trusted_devices("resume_from_desktop_mode")
 
     def _is_desktop_mode_active(self) -> bool:
         pgrep = shutil.which("pgrep")

@@ -126,16 +126,30 @@ If Windows is visible to KDEck but `discover` returns an empty array, Windows is
 
 Connection diagnostics:
 
-KDEck records whether the receiver is expected to run, whether it is paused by desktop mode, whether UDP/TCP listeners are active, the latest discovery, recent connection errors, recent clipboard status, and recent file status. The exported log package includes this redacted diagnostic data in `manifest.json`, making it easier to identify whether a problem is in discovery, connection, TLS, pairing, or file transfer.
+KDEck records whether the receiver is expected to run, whether it is paused by desktop mode, whether UDP/TCP listeners are active, the latest UDP discovery source, recent TCP success/failure, recent TLS success/failure, recent pair state, trusted-device reannounce targets, recent clipboard status, recent file status, and recent payload transfer errors. The exported log package includes this redacted diagnostic data in `manifest.json`, making it easier to identify whether a problem is in discovery, connection, TLS, pairing, or file transfer.
 
 Hidden developer commands:
 
 ```text
+:kdeck help
+:kdeck status
+:kdeck devices
+:kdeck reannounce
 :kdeck export logs
 :kdeck logs
+:kdeck share logs
 ```
 
-Enter either command in the KDEck clipboard text field and press Enter to export a redacted log package to the Steam Deck `Downloads` directory. The command text is not saved as clipboard content.
+Enter one command in the KDEck clipboard text field and press Enter. These commands are intentionally hidden so normal users still see the field as a simple clipboard display, while testers can use it as a small diagnostic console. The command text is not saved as clipboard content.
+
+- `:kdeck help` lists available hidden commands.
+- `:kdeck status` shows the receiver diagnostic summary.
+- `:kdeck devices` shows discovered and trusted device counts.
+- `:kdeck reannounce` sends an immediate trusted-device reannounce.
+- `:kdeck logs` and `:kdeck export logs` export a redacted log package to the Steam Deck `Downloads` directory.
+- `:kdeck share logs` also exports logs, but does not directly send them back to a phone or computer. KDEck is an isolated receiver and does not keep a reliable reverse-send session; using desktop KDE Connect for this would reintroduce the desktop service dependency KDEck avoids.
+
+The log package can be attached to a GitHub issue. Bug report and test report templates are available in the repository.
 
 The generated plugin package is:
 

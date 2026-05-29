@@ -126,16 +126,30 @@ python tools/kdeck_fake_client.py bad-packet --host 192.0.2.37 bad-body
 
 连接诊断：
 
-KDEck 后端会记录 receiver 是否期望运行、是否因为桌面模式暂停、UDP/TCP 是否监听、最近 discovery、最近连接错误、最近剪贴板和最近文件状态。日志导出包里的 `manifest.json` 会包含这些脱敏诊断信息，方便判断问题卡在发现、连接、TLS、配对还是文件传输阶段。
+KDEck 后端会记录 receiver 是否期望运行、是否因为桌面模式暂停、UDP/TCP 是否监听、最近 UDP discovery 来源、最近 TCP 成功/失败、最近 TLS 成功/失败、最近配对状态、可信设备 reannounce 目标、最近剪贴板状态、最近文件状态和最近 payload 传输错误。日志导出包里的 `manifest.json` 会包含这些脱敏诊断信息，方便判断问题卡在发现、连接、TLS、配对还是文件传输阶段。
 
 隐藏开发命令：
 
 ```text
+:kdeck help
+:kdeck status
+:kdeck devices
+:kdeck reannounce
 :kdeck export logs
 :kdeck logs
+:kdeck share logs
 ```
 
-在 KDEck 剪贴板文本框输入其中一条并按 Enter，会把脱敏日志包导出到 Steam Deck 的 `Downloads` 目录。命令文本不会作为剪贴板内容保存。
+在 KDEck 剪贴板文本框输入其中一条并按 Enter。隐藏命令的意义是：普通用户仍把这个文本框当作剪贴板展示框，测试者可以把它当作一个很小的诊断控制台。命令文本不会作为剪贴板内容保存。
+
+- `:kdeck help` 显示可用隐藏命令。
+- `:kdeck status` 显示 receiver 诊断摘要。
+- `:kdeck devices` 显示已发现设备和可信设备数量。
+- `:kdeck reannounce` 立即触发一轮可信设备 reannounce。
+- `:kdeck logs` 和 `:kdeck export logs` 会把脱敏日志包导出到 Steam Deck 的 `Downloads` 目录。
+- `:kdeck share logs` 也会导出日志，但不会直接反向发送到手机或电脑。KDEck 当前是隔离接收端，不保存可靠的反向发送会话；如果改用桌面 KDE Connect 发送，会重新引入 KDEck 正在避免的桌面服务依赖。
+
+导出的日志包可以附到 GitHub issue。仓库里提供了 Bug report 和 Test report 模板。
 
 生成的安装包位于：
 

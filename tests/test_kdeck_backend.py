@@ -114,6 +114,12 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
                 "paired": False,
                 "last_discovery_received": None,
                 "last_connect_attempt": None,
+                "last_tcp_success": {"host": "192.0.2.153"},
+                "last_tls_success": {"host": "192.0.2.153"},
+                "last_tls_error": None,
+                "last_pair": {"paired": True},
+                "last_reannounce_targets": {"direct_targets": []},
+                "last_payload_error": None,
                 "last_clipboard": None,
                 "last_file": None,
                 "last_error": None,
@@ -124,6 +130,35 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status["diagnostic_summary"]["state"], "waiting_discovery")
         self.assertTrue(status["diagnostic_summary"]["checks"]["udp"])
+        self.assertTrue(status["diagnostic_summary"]["checks"]["recent_tcp_success"])
+        self.assertEqual(status["diagnostic_summary"]["last_pair"], {"paired": True})
+
+    async def test_hidden_status_command_returns_diagnostics(self):
+        backend = self.make_backend()
+
+        with mock.patch.object(backend, "get_managed_kde_status", return_value={"diagnostic_summary": {"message": "ready"}}):
+            result = backend.run_hidden_command(":kdeck status")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["message"], "ready")
+
+    async def test_hidden_share_logs_exports_without_reverse_send(self):
+        backend = self.make_backend()
+
+        result = backend.run_hidden_command(":kdeck share logs")
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(Path(result["path"]).exists())
+        self.assertIn("Direct reverse sending is not supported", result["message"])
+
+    async def test_hidden_reannounce_command_calls_receiver(self):
+        backend = self.make_backend()
+
+        with mock.patch.object(backend.kde_receiver, "reannounce_trusted_devices", return_value={"ok": True}) as reannounce:
+            result = backend.run_hidden_command(":kdeck reannounce")
+
+        self.assertTrue(result["ok"])
+        reannounce.assert_called_once_with("hidden_command")
 
     async def test_incoming_directory_uses_kdeck_receiver_directory(self):
         backend = self.make_backend()
