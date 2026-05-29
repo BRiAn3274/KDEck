@@ -1,8 +1,8 @@
+import hashlib
+import ipaddress
 import json
 import os
 import secrets
-import hashlib
-import ipaddress
 import shutil
 import socket
 import ssl
@@ -11,7 +11,6 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
-
 
 UDP_PORT = 1716
 TCP_PORT_MIN = 1714
@@ -44,6 +43,56 @@ IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "
 ANDROID_DEVICE_TYPES = {"phone", "tablet"}
 
 
+def interface_path_type(name: str) -> str:
+    """Classify a network interface name into a path type."""
+    clean = (name or "").lower()
+    if clean.startswith(("wlan", "wl", "en", "eth")):
+        return "lan"
+    if clean.startswith("et_"):
+        return "easytier"
+    if clean.startswith("zt"):
+        return "zerotier"
+    if clean.startswith(("tailscale", "tailscale0")):
+        return "tailscale"
+    if clean.startswith(("tun", "tap", "ppp")):
+        return "vpn"
+    return "other"
+
+
+INTERFACE_PRIORITIES = {
+    "lan": 100,
+    "easytier": 80,
+    "zerotier": 70,
+    "tailscale": 60,
+    "vpn": 40,
+    "other": 10,
+}
+
+
+def interface_priority(name: str) -> int:
+    """Return a priority score for a network interface."""
+    return INTERFACE_PRIORITIES.get(interface_path_type(name), 10)
+
+
+def is_usable_ipv4(address: Optional[str]) -> bool:
+    """Return True if the IPv4 address is usable for KDE Connect discovery."""
+    if not address:
+        return False
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        return False
+    return ip not in ipaddress.ip_network("198.18.0.0/15")
+
+
+def is_ignored_interface(name: str) -> bool:
+    """Return True if the interface should be excluded from KDE Connect."""
+    clean = (name or "").lower()
+    return clean.startswith(IGNORED_INTERFACE_PREFIXES)
+
+
 class KDEckKdeReceiver:
     def __init__(
         self,
@@ -63,11 +112,15 @@ class KDEckKdeReceiver:
         self.event_log_path = state_dir / "receiver-events.jsonl"
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
+        self.connection_threads: list[threading.Thread] = []
         self.tcp_socket: Optional[socket.socket] = None
         self.udp_socket: Optional[socket.socket] = None
         self.tcp_port: Optional[int] = None
         self.peer_connect_attempts: dict[str, float] = {}
         self.state_lock = threading.Lock()
+        self.data_lock = threading.Lock()
+        self.event_buffer: list[dict[str, Any]] = []
+        self.event_buffer_lock = threading.Lock()
         self.diagnostics: dict[str, Any] = {
             "udp_working": False,
             "tcp_working": False,
@@ -82,6 +135,7 @@ class KDEckKdeReceiver:
             "last_tls_success": None,
             "last_tls_error": None,
             "last_pair": None,
+            "pending_pair": None,
             "last_reannounce_targets": None,
             "last_payload_error": None,
             "last_clipboard": None,
@@ -89,6 +143,8 @@ class KDEckKdeReceiver:
             "interfaces": [],
             "discovered_devices": {},
         }
+        self.pending_pair_socket: Optional[ssl.SSLSocket] = None
+        self.pending_pair_lock = threading.Lock()
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.device_id = self._device_id()
 
@@ -103,7 +159,8 @@ class KDEckKdeReceiver:
             self._write_event("certificate_init_failed", {"error": str(exc)})
             return {"ok": False, "running": False, "error": {"code": "certificate_init_failed", "message": str(exc)}}
         self.stop_event.clear()
-        self.tcp_port = None
+        with self.data_lock:
+            self.tcp_port = None
         self._write_event("receiver_starting", {"udp_port": UDP_PORT, "tcp_port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}"})
         for name, target in (
             ("KDEckKdeTcpServer", self._tcp_server),
@@ -132,14 +189,37 @@ class KDEckKdeReceiver:
             if thread.is_alive():
                 thread.join(timeout=1.5)
         self.threads = [thread for thread in self.threads if thread.is_alive()]
-        self.tcp_port = None
+        with self.data_lock:
+            self.connection_threads[:] = [t for t in self.connection_threads if t.is_alive()]
+            for thread in self.connection_threads:
+                if thread.is_alive():
+                    thread.join(timeout=1.0)
+            self.connection_threads.clear()
+            self.tcp_port = None
         self._set_diagnostic("udp_working", False)
         self._set_diagnostic("tcp_working", False)
+        self._clear_pending_pair()
+        self._flush_event_buffer()
         self._write_event("receiver_stopped", {})
         return {"ok": True, "running": False}
 
+    def _tcp_port_value(self) -> Optional[int]:
+        with self.data_lock:
+            return self.tcp_port
+
+    def _start_connection_thread(self, target: Callable, name: str) -> threading.Thread:
+        """Track a daemon thread that will be joined on stop()."""
+        thread = threading.Thread(target=target, name=name, daemon=True)
+        with self.data_lock:
+            self.connection_threads[:] = [t for t in self.connection_threads if t.is_alive()]
+            self.connection_threads.append(thread)
+        thread.start()
+        return thread
+
     def reannounce_trusted_devices(self, reason: str = "manual_trusted_reannounce") -> dict[str, Any]:
-        if not self.tcp_port:
+        with self.data_lock:
+            port = self.tcp_port
+        if not port:
             self._write_event("trusted_reannounce_skipped", {"reason": reason, "skip_reason": "tcp_not_ready"})
             return {"ok": False, "reason": "tcp_not_ready"}
         self._broadcast_identity(reason=reason)
@@ -162,7 +242,7 @@ class KDEckKdeReceiver:
             "running": running,
             "device_name": DEVICE_NAME,
             "device_id": self.device_id,
-            "tcp_port": self.tcp_port,
+            "tcp_port": self._tcp_port_value(),
             "tcp_port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}",
             "udp_port": UDP_PORT,
             "udp_working": diagnostics.get("udp_working"),
@@ -181,6 +261,7 @@ class KDEckKdeReceiver:
             "last_tls_success": diagnostics.get("last_tls_success"),
             "last_tls_error": diagnostics.get("last_tls_error"),
             "last_pair": diagnostics.get("last_pair"),
+            "pending_pair": diagnostics.get("pending_pair"),
             "last_reannounce_targets": diagnostics.get("last_reannounce_targets"),
             "last_payload_error": diagnostics.get("last_payload_error"),
             "last_clipboard": diagnostics.get("last_clipboard"),
@@ -200,7 +281,8 @@ class KDEckKdeReceiver:
             server.listen(5)
             server.settimeout(1)
             self.tcp_socket = server
-            self.tcp_port = tcp_port
+            with self.data_lock:
+                self.tcp_port = tcp_port
         except OSError as exc:
             self._log("KDE receiver TCP start failed: %s", exc)
             error = {"message": str(exc), "time": int(time.time()), "port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}"}
@@ -211,7 +293,7 @@ class KDEckKdeReceiver:
             return
         self._set_diagnostic("tcp_working", True)
         self._set_diagnostic("tcp_error", None)
-        self._write_event("tcp_listening", {"host": "0.0.0.0", "port": self.tcp_port})
+        self._write_event("tcp_listening", {"host": "0.0.0.0", "port": tcp_port})
 
         while not self.stop_event.is_set():
             try:
@@ -220,7 +302,7 @@ class KDEckKdeReceiver:
                 continue
             except OSError:
                 break
-            threading.Thread(target=self._handle_incoming_tcp, args=(conn, addr), daemon=True).start()
+            self._start_connection_thread(lambda c=conn, a=addr: self._handle_incoming_tcp(c, a), f"KDEckTcpHandler-{addr[0]}:{addr[1]}")
 
     def _udp_server(self) -> None:
         try:
@@ -277,24 +359,28 @@ class KDEckKdeReceiver:
                     reply_strategy=reply_strategy,
                 )
             if self._should_connect_to_peer(addr[0], tcp_port, body):
-                threading.Thread(target=self._connect_to_peer, args=(addr[0], tcp_port, body), daemon=True).start()
+                self._start_connection_thread(
+                    lambda h=addr[0], p=tcp_port, b=body: self._connect_to_peer(h, p, b),
+                    f"KDEckPeerConnect-{addr[0]}:{tcp_port}",
+                )
 
     def _broadcast_loop(self) -> None:
         started_at = time.monotonic()
         for delay in STARTUP_BROADCAST_DELAYS:
             if self.stop_event.wait(max(0, started_at + delay - time.monotonic())):
                 return
-            if not self.tcp_port:
+            if not self._tcp_port_value():
                 continue
             self._broadcast_identity(reason=f"startup_{delay}s")
         while not self.stop_event.wait(BROADCAST_INTERVAL_SECONDS):
-            if not self.tcp_port:
+            if not self._tcp_port_value():
                 continue
             self._broadcast_identity(reason="interval")
 
     def _broadcast_identity(self, reason: str = "manual") -> None:
+        tcp_port = self._tcp_port_value()
         packet = self._identity_packet()
-        packet["body"]["tcpPort"] = self.tcp_port
+        packet["body"]["tcpPort"] = tcp_port
         payload = self._encode_packet(packet)
         interfaces = self._network_interfaces()
         targets = self._broadcast_targets(interfaces)
@@ -352,11 +438,12 @@ class KDEckKdeReceiver:
         peer_identity: Optional[dict[str, Any]] = None,
         reply_strategy: Optional[str] = None,
     ) -> None:
-        if not self.tcp_port:
+        tcp_port = self._tcp_port_value()
+        if not tcp_port:
             self._write_event("identity_reply_skipped", {"host": host, "reason": "tcp_not_ready"})
             return
         packet = self._identity_packet(target_device_id=target_device_id, target_protocol_version=target_protocol_version)
-        packet["body"]["tcpPort"] = self.tcp_port
+        packet["body"]["tcpPort"] = tcp_port
         payload = self._encode_packet(packet)
         interfaces = self._network_interfaces()
         source_ips = self._source_ips_for_host(host, interfaces)
@@ -649,28 +736,29 @@ class KDEckKdeReceiver:
                 self._write_trusted_devices(trusted)
                 self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": False, "time": int(time.time())})
                 self._write_event("unpaired", {"device_id": peer_id})
+                self._clear_pending_pair()
                 return
-            trusted = self._trusted_devices()
-            existing = trusted.get(peer_id) if isinstance(trusted.get(peer_id), dict) else {}
-            trusted[peer_id] = {
-                **existing,
-                "paired_at": int(time.time()),
-                "fingerprint": fingerprint,
-                "trust_mode": "fingerprint" if fingerprint else "device_id",
-                "last_host": peer_host,
-                "last_connected": int(time.time()),
-            }
-            self._write_trusted_devices(trusted)
-            tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": True}}))
-            self._log("KDE receiver paired with %s", peer_id)
-            self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": True, "time": int(time.time()), "trust_mode": "fingerprint" if fingerprint else "device_id"})
+            if self._is_trusted_device(peer_id, fingerprint):
+                self._accept_pair_inner(tls, peer_id, peer_host, fingerprint)
+                return
             self._write_event(
-                "paired",
+                "pending_pair_stored",
                 {
                     "device_id": peer_id,
                     "fingerprint": fingerprint,
-                    "trust_mode": "fingerprint" if fingerprint else "device_id",
-                    "weak_trust_fallback": fingerprint is None,
+                    "host": peer_host,
+                },
+            )
+            with self.pending_pair_lock:
+                self.pending_pair_socket = tls
+            self._set_diagnostic(
+                "pending_pair",
+                {
+                    "device_id": peer_id,
+                    "device_name": body.get("deviceName"),
+                    "host": peer_host,
+                    "fingerprint": fingerprint,
+                    "time": int(time.time()),
                 },
             )
             return
@@ -687,6 +775,83 @@ class KDEckKdeReceiver:
         if packet_type == PACKET_SHARE_REQUEST:
             self._receive_share_request(peer_id, peer_host, packet)
 
+    def _accept_pair_inner(
+        self,
+        tls: ssl.SSLSocket,
+        peer_id: str,
+        peer_host: str,
+        fingerprint: Optional[str],
+    ) -> None:
+        trusted = self._trusted_devices()
+        existing = trusted.get(peer_id) if isinstance(trusted.get(peer_id), dict) else {}
+        trust_mode = "fingerprint" if fingerprint else "device_id"
+        trusted[peer_id] = {
+            **existing,
+            "paired_at": int(time.time()),
+            "fingerprint": fingerprint,
+            "trust_mode": trust_mode,
+            "last_host": peer_host,
+            "last_connected": int(time.time()),
+        }
+        self._write_trusted_devices(trusted)
+        tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": True}}))
+        self._log("KDE receiver paired with %s", peer_id)
+        self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": True, "time": int(time.time()), "trust_mode": trust_mode})
+        self._write_event(
+            "paired",
+            {
+                "device_id": peer_id,
+                "fingerprint": fingerprint,
+                "trust_mode": trust_mode,
+                "weak_trust_fallback": fingerprint is None,
+            },
+        )
+
+    def _clear_pending_pair(self) -> None:
+        with self.pending_pair_lock:
+            sock = self.pending_pair_socket
+            self.pending_pair_socket = None
+        self._set_diagnostic("pending_pair", None)
+        if sock:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def accept_pending_pair(self) -> dict[str, Any]:
+        with self.pending_pair_lock:
+            tls = self.pending_pair_socket
+            self.pending_pair_socket = None
+        pending = self.diagnostics.get("pending_pair")
+        self._set_diagnostic("pending_pair", None)
+        if not tls or not pending:
+            return {"ok": False, "error": {"code": "no_pending_pair", "message": "No pending pair request."}}
+        try:
+            peer_id = pending["device_id"]
+            peer_host = pending.get("host", "")
+            fingerprint = pending.get("fingerprint")
+            self._accept_pair_inner(tls, peer_id, peer_host, fingerprint)
+            return {"ok": True, "device_id": peer_id}
+        except (OSError, ssl.SSLError) as exc:
+            self._log("KDE receiver accept pending pair failed: %s", exc)
+            return {"ok": False, "error": {"code": "accept_pair_failed", "message": str(exc)}}
+
+    def reject_pending_pair(self) -> dict[str, Any]:
+        with self.pending_pair_lock:
+            tls = self.pending_pair_socket
+            self.pending_pair_socket = None
+        pending = self.diagnostics.get("pending_pair")
+        self._set_diagnostic("pending_pair", None)
+        if not tls or not pending:
+            return {"ok": False, "error": {"code": "no_pending_pair", "message": "No pending pair request."}}
+        try:
+            tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": False}}))
+            tls.close()
+        except (OSError, ssl.SSLError):
+            pass
+        self._write_event("pending_pair_rejected", {"device_id": pending.get("device_id")})
+        return {"ok": True}
+
     def _identity_packet(self, target_device_id: Optional[str] = None, target_protocol_version: Any = None) -> dict[str, Any]:
         body: dict[str, Any] = {
             "deviceId": self.device_id,
@@ -696,8 +861,9 @@ class KDEckKdeReceiver:
             "incomingCapabilities": CAPABILITIES,
             "outgoingCapabilities": [],
         }
-        if self.tcp_port:
-            body["tcpPort"] = self.tcp_port
+        tcp_port = self._tcp_port_value()
+        if tcp_port:
+            body["tcpPort"] = tcp_port
         if target_device_id:
             body["targetDeviceId"] = target_device_id
         if target_protocol_version:
@@ -710,12 +876,17 @@ class KDEckKdeReceiver:
             return False
         key = f"{device_id}@{host}:{port}"
         now = time.monotonic()
-        previous = self.peer_connect_attempts.get(key)
         cooldown = TRUSTED_PEER_CONNECT_COOLDOWN_SECONDS if self._trusted_devices().get(device_id) else PEER_CONNECT_COOLDOWN_SECONDS
-        if previous is not None and now - previous < cooldown:
+        with self.data_lock:
+            previous = self.peer_connect_attempts.get(key)
+            if previous is not None and now - previous < cooldown:
+                skip = True
+            else:
+                self.peer_connect_attempts[key] = now
+                skip = False
+        if skip:
             self._write_event("peer_connect_skipped", {"host": host, "port": port, "device_id": device_id, "reason": "cooldown", "cooldown_seconds": cooldown})
             return False
-        self.peer_connect_attempts[key] = now
         return True
 
     def _identity_reply_ports(self, source_port: int, peer_identity: dict[str, Any]) -> list[int]:
@@ -1159,44 +1330,16 @@ class KDEckKdeReceiver:
         return [source for _priority, source in selected] or [None]
 
     def _is_ignored_interface(self, name: str) -> bool:
-        clean = (name or "").lower()
-        return clean.startswith(IGNORED_INTERFACE_PREFIXES)
+        return is_ignored_interface(name)
 
     def _interface_path_type(self, name: str) -> str:
-        clean = (name or "").lower()
-        if clean.startswith(("wlan", "wl", "en", "eth")):
-            return "lan"
-        if clean.startswith("et_"):
-            return "easytier"
-        if clean.startswith("zt"):
-            return "zerotier"
-        if clean.startswith(("tailscale", "tailscale0")):
-            return "tailscale"
-        if clean.startswith(("tun", "tap", "ppp")):
-            return "vpn"
-        return "other"
+        return interface_path_type(name)
 
     def _interface_priority(self, name: str) -> int:
-        priorities = {
-            "lan": 100,
-            "easytier": 80,
-            "zerotier": 70,
-            "tailscale": 60,
-            "vpn": 40,
-            "other": 10,
-        }
-        return priorities.get(self._interface_path_type(name), 10)
+        return interface_priority(name)
 
     def _is_usable_ipv4(self, address: Optional[str]) -> bool:
-        if not address:
-            return False
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            return False
-        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-            return False
-        return ip not in ipaddress.ip_network("198.18.0.0/15")
+        return is_usable_ipv4(address)
 
     def _local_ipv4_addresses(self) -> set[str]:
         addresses = {"127.0.0.1"}
@@ -1288,15 +1431,35 @@ class KDEckKdeReceiver:
     def _write_trusted_devices(self, data: dict[str, Any]) -> None:
         self.trusted_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    EVENT_BUFFER_FLUSH_SIZE = 64
+
     def _write_event(self, event: str, details: dict[str, Any]) -> None:
         payload = {"time": int(time.time()), "event": event, **details}
+        with self.event_buffer_lock:
+            try:
+                self._rotate_event_log_if_needed()
+            except OSError:
+                pass
+            self.event_buffer.append(payload)
+            if len(self.event_buffer) >= self.EVENT_BUFFER_FLUSH_SIZE:
+                self._flush_event_buffer_locked()
+        self._log("KDE receiver event %s %s", event, details)
+
+    def _flush_event_buffer(self) -> None:
+        with self.event_buffer_lock:
+            self._flush_event_buffer_locked()
+
+    def _flush_event_buffer_locked(self) -> None:
+        """Must be called with event_buffer_lock held."""
+        if not self.event_buffer:
+            return
         try:
-            self._rotate_event_log_if_needed()
             with self.event_log_path.open("a", encoding="utf-8") as log:
-                log.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                for payload in self.event_buffer:
+                    log.write(json.dumps(payload, ensure_ascii=False) + "\n")
         except OSError:
             pass
-        self._log("KDE receiver event %s %s", event, details)
+        self.event_buffer.clear()
 
     def _rotate_event_log_if_needed(self) -> None:
         try:
@@ -1318,23 +1481,26 @@ class KDEckKdeReceiver:
                 if source.exists():
                     source.replace(target)
             self.event_log_path.replace(self.event_log_path.with_name(f"{self.event_log_path.name}.1"))
+            self.event_log_path.write_text("", encoding="utf-8")
         except OSError:
             pass
 
     def _tail_events(self, limit: int) -> list[dict[str, Any]]:
-        if not self.event_log_path.exists():
-            return []
-        try:
-            lines = self.event_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            return []
-        events = []
-        for line in lines[-limit:]:
+        events: list[dict[str, Any]] = []
+        with self.event_buffer_lock:
+            events.extend(self.event_buffer[-limit:])
+        disk_limit = limit - len(events)
+        if disk_limit > 0 and self.event_log_path.exists():
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return events
+                lines = self.event_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+            for line in lines[-disk_limit:]:
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return events[-limit:]
 
     def _log(self, message: str, *args: Any) -> None:
         if self.logger:

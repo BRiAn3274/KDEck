@@ -3,7 +3,6 @@ import sys
 import zipfile
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_JSON = ROOT / "package.json"
 PLUGIN_NAME = "KDEck"
@@ -24,7 +23,7 @@ EXCLUDED_SUFFIXES = (".map", ".pyc")
 
 def main() -> int:
     package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
-    version = sys.argv[1] if len(sys.argv) > 1 else package["version"]
+    _version = sys.argv[1] if len(sys.argv) > 1 else package["version"]
 
     dist_index = ROOT / "dist" / "index.js"
     if not dist_index.exists():

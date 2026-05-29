@@ -1,7 +1,7 @@
-import unittest
-import tempfile
-import sys
 import json
+import sys
+import tempfile
+import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock

@@ -1,10 +1,8 @@
 import asyncio
-import ipaddress
 import json
 import os
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import threading
@@ -14,8 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from kdeck_kde_receiver import KDEckKdeReceiver
-
+from kdeck_kde_receiver import KDEckKdeReceiver, interface_path_type, interface_priority, is_ignored_interface, is_usable_ipv4
 
 DECK_USER = "deck"
 DECK_UID = 1000
@@ -179,6 +176,12 @@ class KDEckBackend:
         self.managed_kde_pause_reason = None
         return self.kde_receiver.stop()
 
+    def accept_pending_pair(self) -> dict[str, Any]:
+        return self.kde_receiver.accept_pending_pair()
+
+    def reject_pending_pair(self) -> dict[str, Any]:
+        return self.kde_receiver.reject_pending_pair()
+
     def get_managed_kde_status(self) -> dict[str, Any]:
         status = self.kde_receiver.status()
         desktop_mode = self._is_desktop_mode_active()
@@ -275,7 +278,7 @@ class KDEckBackend:
             result = self.kde_receiver.reannounce_trusted_devices("hidden_command")
             result["message"] = "Trusted-device reannounce sent." if result.get("ok") else "Receiver TCP listener is not ready."
             return result
-        return self._error("unknown_hidden_command", "未知隐藏命令。", command=command)
+        return self._error("unknown_hidden_command", "Unknown hidden command.", command=command)
 
     def _ensure_mode_monitor(self) -> None:
         if self.mode_monitor_thread and self.mode_monitor_thread.is_alive():
@@ -415,11 +418,11 @@ class KDEckBackend:
     async def ensure_daemon(self) -> dict[str, Any]:
         status = await self.get_status()
         if not status["kdeconnectd"]["found"]:
-            return self._error("missing_daemon", "找不到 kdeconnectd。", status=status)
+            return self._error("missing_daemon", "kdeconnectd not found.", status=status)
         if not status["kdeconnect_cli"]["found"]:
-            return self._error("missing_cli", "找不到 kdeconnect-cli。", status=status)
+            return self._error("missing_cli", "kdeconnect-cli not found.", status=status)
         if not status["dbus"]["bus_exists"]:
-            return self._error("missing_dbus", "deck 用户 DBus session bus 不存在。", status=status)
+            return self._error("missing_dbus", "The deck user DBus session bus is unavailable.", status=status)
         if status["kdeconnectd"]["running"] and status["dbus"]["service_ready"]:
             return {"ok": True, "state": "daemon_ready", "status": status}
 
@@ -438,7 +441,7 @@ class KDEckBackend:
                 }
         return self._error(
             "daemon_failed",
-            "kdeconnectd 已尝试启动，但 DBus 服务没有在 15 秒内就绪。",
+            "kdeconnectd started but DBus service was not ready within 15 seconds.",
             start=start,
             status=await self.get_status(),
             daemon_log=self._tail_file(self.daemon_log_path, 80),
@@ -449,10 +452,10 @@ class KDEckBackend:
             return {"ok": True, "state": "already_running", "status": await self.get_status()}
         daemon_path = shutil.which("kdeconnectd")
         if not daemon_path:
-            return self._error("missing_daemon", "找不到 kdeconnectd。")
+            return self._error("missing_daemon", "kdeconnectd not found.")
         result = self._spawn_daemon(daemon_path)
         if not result["ok"]:
-            return self._error("daemon_start_failed", "启动 kdeconnectd 失败。", **result)
+            return self._error("daemon_start_failed", "Failed to start kdeconnectd.", **result)
         await asyncio.sleep(1)
         return {"ok": True, "state": "daemon_starting", **result}
 
@@ -468,7 +471,7 @@ class KDEckBackend:
             return {"ok": True, "state": "managed_daemon_not_owned", "pid": pid}
         result = await self._run(["kill", str(pid)], timeout=5)
         if result.returncode not in (0, 1):
-            return self._error("managed_daemon_stop_failed", "停止插件拉起的 kdeconnectd 失败。", command=result.to_dict())
+            return self._error("managed_daemon_stop_failed", "Failed to stop the managed kdeconnectd.", command=result.to_dict())
         self._remove_file(self.daemon_pid_path)
         return {"ok": True, "state": "managed_daemon_stopped", "pid": pid, "command": result.to_dict()}
 
@@ -485,14 +488,14 @@ class KDEckBackend:
             return ready
         result = await self._kdeconnect_cli(["--refresh"], timeout=15)
         if not result.ok:
-            return self._error("refresh_failed", "刷新设备列表失败。", command=result.to_dict())
+            return self._error("refresh_failed", "Failed to refresh device list.", command=result.to_dict())
         await asyncio.sleep(1)
         devices = await self.list_devices()
         return {"ok": devices["ok"], "command": result.to_dict(), "devices": devices}
 
     async def list_devices(self) -> dict[str, Any]:
         if not shutil.which("kdeconnect-cli"):
-            return self._error("missing_cli", "找不到 kdeconnect-cli。")
+            return self._error("missing_cli", "kdeconnect-cli not found.")
         if not await self._is_daemon_running() or not await self._is_dbus_service_ready():
             return {
                 "ok": False,
@@ -518,22 +521,22 @@ class KDEckBackend:
         }
 
     async def pair_device(self, device_id: str) -> dict[str, Any]:
-        return await self._device_action(device_id, "--pair", "pair_failed", "请求配对失败。")
+        return await self._device_action(device_id, "--pair", "pair_failed", "Failed to request pairing.")
 
     async def unpair_device(self, device_id: str) -> dict[str, Any]:
-        return await self._device_action(device_id, "--unpair", "unpair_failed", "取消配对失败。")
+        return await self._device_action(device_id, "--unpair", "unpair_failed", "Failed to unpair device.")
 
     async def send_clipboard(self, device_id: str) -> dict[str, Any]:
         return await self._device_action(
             device_id,
             "--send-clipboard",
             "send_clipboard_failed",
-            "发送当前剪贴板失败。",
+            "Failed to send current clipboard.",
         )
 
     async def share_text(self, device_id: str, text: str) -> dict[str, Any]:
         if not text:
-            return self._error("empty_text", "发送文本不能为空。")
+            return self._error("empty_text", "Text to send cannot be empty.")
         normalized = self._validate_device_id(device_id)
         if not normalized["ok"]:
             return normalized
@@ -545,11 +548,19 @@ class KDEckBackend:
             timeout=30,
         )
         if not result.ok:
-            return self._error("share_text_failed", "发送文本失败。", command=result.to_dict())
+            return self._error("share_text_failed", "Failed to send text.", command=result.to_dict())
         return {"ok": True, "command": result.to_dict()}
 
     async def get_clipboard(self, max_chars: int = 500) -> dict[str, Any]:
         max_chars = max(0, min(int(max_chars), 5000))
+        text = await self._read_clipboard(max_chars)
+        if text is not None:
+            return {
+                "ok": True,
+                "text": text[:max_chars],
+                "length": len(text),
+                "truncated": len(text) > max_chars,
+            }
         script = (
             "import tkinter as tk\n"
             "root=tk.Tk(); root.withdraw()\n"
@@ -562,7 +573,7 @@ class KDEckBackend:
         )
         result = await self._run(["python3", "-c", script], timeout=5)
         if not result.ok:
-            return self._error("clipboard_read_failed", "读取 Deck 当前剪贴板失败。", command=result.to_dict())
+            return self._error("clipboard_read_failed", "Failed to read Deck clipboard.", command=result.to_dict())
         text = result.stdout
         return {
             "ok": True,
@@ -571,10 +582,24 @@ class KDEckBackend:
             "truncated": len(text) > max_chars,
         }
 
+    async def _read_clipboard(self, max_chars: int) -> Optional[str]:
+        """Try native clipboard tools before falling back to tkinter."""
+        if shutil.which("wl-paste"):
+            result = await self._run(["wl-paste"], timeout=5)
+            if result.ok:
+                return result.stdout
+        if shutil.which("xclip"):
+            result = await self._run(["xclip", "-o", "-selection", "clipboard"], timeout=5)
+            if result.ok:
+                return result.stdout
+        return None
+
     async def set_clipboard(self, text: str) -> dict[str, Any]:
         return self.set_clipboard_sync(text)
 
     def set_clipboard_sync(self, text: str) -> dict[str, Any]:
+        if self._write_clipboard_native(text):
+            return {"ok": True, "length": len(text)}
         script = (
             "import sys, tkinter as tk\n"
             "data=sys.stdin.read()\n"
@@ -584,8 +609,24 @@ class KDEckBackend:
         )
         result = self._run_sync(["python3", "-c", script], input_text=text, timeout=5)
         if not result.ok:
-            return self._error("clipboard_write_failed", "写入 Deck 当前剪贴板失败。", command=result.to_dict())
+            return self._error("clipboard_write_failed", "Failed to write Deck clipboard.", command=result.to_dict())
         return {"ok": True, "length": len(text)}
+
+    def _write_clipboard_native(self, text: str) -> bool:
+        """Try native clipboard tools, return True on success."""
+        if shutil.which("wl-copy"):
+            result = self._run_sync(["wl-copy"], input_text=text, timeout=5)
+            if result.ok:
+                return True
+        if shutil.which("xclip"):
+            result = self._run_sync(
+                ["xclip", "-selection", "clipboard"],
+                input_text=text,
+                timeout=5,
+            )
+            if result.ok:
+                return True
+        return False
 
     async def share_file(self, device_id: str, path: str) -> dict[str, Any]:
         normalized = self._validate_device_id(device_id)
@@ -593,11 +634,11 @@ class KDEckBackend:
             return normalized
         file_path = Path(path).expanduser()
         if not file_path.is_absolute():
-            return self._error("path_not_absolute", "文件路径必须是绝对路径。")
+            return self._error("path_not_absolute", "File path must be absolute.")
         if not file_path.exists():
-            return self._error("path_not_found", "文件不存在。", path=str(file_path))
+            return self._error("path_not_found", "File not found.", path=str(file_path))
         if not file_path.is_file():
-            return self._error("path_not_file", "当前只支持发送单个文件。", path=str(file_path))
+            return self._error("path_not_file", "Only single-file sharing is supported.", path=str(file_path))
 
         result = await self._kdeconnect_cli(
             ["--share", str(file_path), "--device", normalized["device_id"]],
@@ -617,7 +658,7 @@ class KDEckBackend:
             }
         )
         if not result.ok:
-            return self._error("share_file_failed", "发送文件失败。", command=result.to_dict())
+            return self._error("share_file_failed", "Failed to send file.", command=result.to_dict())
         return {"ok": True, "status": status, "file": str(file_path), "command": result.to_dict()}
 
     async def list_files(self, directory: str = "", limit: int = 200) -> dict[str, Any]:
@@ -627,15 +668,15 @@ class KDEckBackend:
         try:
             resolved = base.resolve()
         except FileNotFoundError:
-            return self._error("directory_not_found", "目录不存在。", directory=str(base))
+            return self._error("directory_not_found", "Directory not found.", directory=str(base))
         if not any(resolved == root or root in resolved.parents for root in allowed_roots):
             return self._error(
                 "directory_not_allowed",
-                "第一版文件选择只允许访问 Downloads、Documents、Pictures。",
+                "File browser is limited to Downloads, Documents, and Pictures.",
                 directory=str(resolved),
             )
         if not resolved.is_dir():
-            return self._error("path_not_directory", "路径不是目录。", directory=str(resolved))
+            return self._error("path_not_directory", "Path is not a directory.", directory=str(resolved))
 
         entries = []
         for item in sorted(resolved.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))[:limit]:
@@ -946,7 +987,7 @@ class KDEckBackend:
     def _validate_device_id(self, device_id: str) -> dict[str, Any]:
         device_id = (device_id or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9._:-]{4,128}", device_id):
-            return self._error("invalid_device_id", "设备 ID 格式不合法。")
+            return self._error("invalid_device_id", "Device ID format is invalid.")
         return {"ok": True, "device_id": device_id}
 
     def _read_history(self) -> list[dict[str, Any]]:
@@ -962,65 +1003,25 @@ class KDEckBackend:
         items: list[dict[str, Any]] = []
         for iface in interfaces.get("interfaces") or []:
             name = iface.get("ifname", "")
-            if self._is_ignored_receiver_interface(name):
+            if is_ignored_interface(name):
                 continue
             for addr in iface.get("addr_info", []):
                 if addr.get("family") != "inet":
                     continue
                 local = addr.get("local")
-                if not self._is_usable_receiver_ipv4(local):
+                if not is_usable_ipv4(local):
                     continue
-                path_type = self._receiver_interface_path_type(name)
-                priority = self._receiver_interface_priority(name)
+                path_type = interface_path_type(name)
                 items.append(
                     {
                         "interface": name,
                         "address": local,
                         "prefixlen": addr.get("prefixlen"),
-                        "priority": priority,
+                        "priority": interface_priority(name),
                         "path_type": path_type,
                     }
                 )
         return items
-
-    def _is_ignored_receiver_interface(self, name: str) -> bool:
-        clean = (name or "").lower()
-        return clean.startswith(("lo", "docker", "veth", "br-", "virbr", "vmnet", "mihomo", "clash"))
-
-    def _receiver_interface_path_type(self, name: str) -> str:
-        clean = (name or "").lower()
-        if clean.startswith(("wlan", "wl", "en", "eth")):
-            return "lan"
-        if clean.startswith("et_"):
-            return "easytier"
-        if clean.startswith("zt"):
-            return "zerotier"
-        if clean.startswith(("tailscale", "tailscale0")):
-            return "tailscale"
-        if clean.startswith(("tun", "tap", "ppp")):
-            return "vpn"
-        return "other"
-
-    def _receiver_interface_priority(self, name: str) -> int:
-        return {
-            "lan": 100,
-            "easytier": 80,
-            "zerotier": 70,
-            "tailscale": 60,
-            "vpn": 40,
-            "other": 10,
-        }.get(self._receiver_interface_path_type(name), 10)
-
-    def _is_usable_receiver_ipv4(self, address: Optional[str]) -> bool:
-        if not address:
-            return False
-        try:
-            ip = ipaddress.ip_address(address)
-        except ValueError:
-            return False
-        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-            return False
-        return ip not in ipaddress.ip_network("198.18.0.0/15")
 
     def _append_transfer_history(self, item: dict[str, Any]) -> None:
         history = self._read_history()
@@ -1030,10 +1031,31 @@ class KDEckBackend:
 
     def _tail_file(self, path: Path, max_lines: int) -> str:
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            with path.open("rb") as f:
+                chunk_size = 8192
+                f.seek(0, 2)
+                file_size = f.tell()
+                lines: list[bytes] = []
+                remaining = file_size
+                while remaining > 0 and len(lines) <= max_lines:
+                    read_size = min(chunk_size, remaining)
+                    remaining -= read_size
+                    f.seek(remaining)
+                    chunk = f.read(read_size)
+                    if remaining == 0:
+                        lines = chunk.splitlines()
+                    else:
+                        splitted = chunk.split(b"\n")
+                        if lines:
+                            splitted[-1] += lines[0]
+                            lines = splitted + lines[1:]
+                        else:
+                            lines = splitted
+                return "\n".join(
+                    line.decode("utf-8", errors="replace") for line in lines[-max_lines:]
+                )
         except OSError:
             return ""
-        return "\n".join(lines[-max_lines:])
 
     def _read_managed_daemon_pid(self) -> Optional[int]:
         try:
@@ -1082,7 +1104,7 @@ class KDEckBackend:
         except OSError:
             return False
         name = resolved.name.lower()
-        return "kdeck" in name or name == "kdeck"
+        return name == "kdeck" or name.startswith("kdeck-")
 
     def _read_ini_value(self, path: Path, key: str) -> Optional[str]:
         try:
