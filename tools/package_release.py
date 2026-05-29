@@ -12,6 +12,7 @@ FILES = (
     "package.json",
     "main.py",
     "README.md",
+    "README.zh-CN.md",
     "CHANGELOG.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

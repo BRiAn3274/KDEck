@@ -10,8 +10,81 @@ import { FaLink } from "react-icons/fa";
 
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.4.1";
 const EXPORT_LOG_COMMANDS = new Set([":kdeck export logs", ":kdeck logs"]);
+
+const messages = {
+  "zh-CN": {
+    done: "完成",
+    failed: "失败",
+    checking: "检查中",
+    checkFailed: "检查失败",
+    busy: "正在处理，请稍等",
+    refreshConnection: "刷新连接",
+    connection: "连接",
+    device: "设备",
+    disconnected: "未连接",
+    status: "连接状态",
+    desktopPaused: "桌面模式暂停",
+    receiverReady: "KDEck 接收中",
+    receiverStarting: "KDEck 启动中",
+    clipboard: "剪贴板",
+    syncText: "同步文本框",
+    receivedClipboard: "已收到手机剪贴板",
+    exportLogs: "导出日志",
+    logsExported: "日志已导出",
+    receiveFile: "接收文件",
+    file: "文件",
+    noFile: "暂无",
+    fileReceiveFailed: "文件接收失败",
+    fileReceived: "已接收文件",
+    unknownError: "未知错误",
+    errors: {} as Record<string, string>,
+  },
+  en: {
+    done: "done",
+    failed: "failed",
+    checking: "Checking",
+    checkFailed: "Check failed",
+    busy: "Working, please wait",
+    refreshConnection: "Refresh Connection",
+    connection: "Connection",
+    device: "Device",
+    disconnected: "Disconnected",
+    status: "Connection status",
+    desktopPaused: "Paused in desktop mode",
+    receiverReady: "KDEck receiving",
+    receiverStarting: "KDEck starting",
+    clipboard: "Clipboard",
+    syncText: "Sync Text",
+    receivedClipboard: "Clipboard received from phone",
+    exportLogs: "Export Logs",
+    logsExported: "Logs exported",
+    receiveFile: "Received Files",
+    file: "File",
+    noFile: "None",
+    fileReceiveFailed: "File receive failed",
+    fileReceived: "File received",
+    unknownError: "Unknown error",
+    errors: {
+      clipboard_read_failed: "Failed to read the current Deck clipboard",
+      clipboard_write_failed: "Failed to write to the current Deck clipboard",
+      directory_not_allowed: "This directory is not allowed",
+      directory_not_found: "Directory not found",
+      missing_cli: "kdeconnect-cli was not found",
+      missing_daemon: "kdeconnectd was not found",
+      missing_dbus: "The deck user DBus session is unavailable",
+      path_not_absolute: "The file path must be absolute",
+      path_not_file: "Only single-file sharing is supported",
+      path_not_found: "File not found",
+      share_file_failed: "File sharing failed",
+      share_text_failed: "Text sharing failed",
+    } as Record<string, string>,
+  },
+} as const;
+
+const language = (navigator.language || "").toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+const text = messages[language];
 
 type SteamClientLike = {
   System?: {
@@ -85,6 +158,7 @@ type Notebook = {
   ok?: boolean;
   text?: string;
   error?: {
+    code?: string;
     message?: string;
   };
 };
@@ -103,6 +177,7 @@ type ManagedKde = {
   last_events?: ManagedEvent[];
   last_file?: ManagedFile | null;
   error?: {
+    code?: string;
     message?: string;
   };
 };
@@ -136,8 +211,11 @@ const saveNotebook = callable<[text: string], Notebook>("save_notebook");
 const exportLogs = callable<[], ApiResult & { path?: string }>("export_logs");
 const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
 
-const resultMessage = (result?: ApiResult | Notebook | ManagedKde) =>
-  result?.error?.message || (result?.ok ? "完成" : "失败");
+const resultMessage = (result?: ApiResult | Notebook | ManagedKde) => {
+  const code = result?.error?.code;
+  if (code && text.errors[code]) return text.errors[code];
+  return result?.error?.message || (result?.ok ? text.done : text.failed);
+};
 
 const formatIp = (ip?: DeckIp | null) => {
   if (!ip) return "-";
@@ -156,8 +234,8 @@ const shortDirectory = (path: string) => {
 
 const formatFileSummary = (file?: ManagedFile | null, items?: IncomingDirectory[]) => {
   const directory = shortDirectory(formatIncomingPath(items));
-  if (!file?.file) return `暂无 -> ${directory}`;
-  if (file.status === "failed") return `${file.file} 接收失败`;
+  if (!file?.file) return `${text.noFile} -> ${directory}`;
+  if (file.status === "failed") return `${file.file} ${text.failed}`;
   return `${file.file} -> ${directory}`;
 };
 
@@ -172,10 +250,10 @@ const deviceState = (managed?: ManagedKde) => {
   const devices = managed?.discovered_devices || [];
   const trustedDevice = devices.find((device) => device.device_id && trusted[device.device_id]);
   if (trustedDevice?.device_name) return { label: shortDeviceName(trustedDevice.device_name), connected: true };
-  if (managed?.paired) return { label: "未连接", connected: false };
+  if (managed?.paired) return { label: text.disconnected, connected: false };
   const latest = devices[0];
   if (latest?.device_name) return { label: shortDeviceName(latest.device_name), connected: false };
-  return { label: "未连接", connected: false };
+  return { label: text.disconnected, connected: false };
 };
 
 const inputStyle: CSSProperties = {
@@ -227,8 +305,8 @@ function DeviceRow({ label, connected }: { label: string; connected: boolean }) 
   return (
     <PanelSectionRow>
       <div style={infoRowStyle}>
-        <span style={infoTextStyle}>设备: {label}</span>
-        <span aria-label="连接状态" style={statusDotStyle(connected)} />
+        <span style={infoTextStyle}>{text.device}: {label}</span>
+        <span aria-label={text.status} style={statusDotStyle(connected)} />
       </div>
     </PanelSectionRow>
   );
@@ -245,7 +323,7 @@ function TextRow({ label, value }: { label: string; value?: string }) {
 }
 
 function Content() {
-  const [summary, setSummary] = useState<ConnectionSummary>({ connection: "检查中" });
+  const [summary, setSummary] = useState<ConnectionSummary>({ connection: text.checking });
   const [clipboardText, setClipboardText] = useState("");
   const [busy, setBusy] = useState(false);
   const [task, setTask] = useState("");
@@ -282,7 +360,7 @@ function Content() {
   };
 
   const refresh = async () => {
-    const next: ConnectionSummary = await getConnectionSummary().catch(() => ({ connection: "检查失败" }));
+    const next: ConnectionSummary = await getConnectionSummary().catch(() => ({ connection: text.checkFailed }));
     if (!mountedRef.current) return;
     setSummary(next);
     notifyManagedEvents(next.managed_kde?.last_events || []);
@@ -300,7 +378,7 @@ function Content() {
     if (!mountedRef.current || editingRef.current || !saved.ok || !nextText) return;
     if (nextText !== clipboardTextRef.current) {
       setText(nextText);
-      if (initializedClipboardRef.current) toast("已收到手机剪贴板");
+      if (initializedClipboardRef.current) toast(text.receivedClipboard);
     }
     initializedClipboardRef.current = true;
   };
@@ -311,7 +389,7 @@ function Content() {
     const key = `${latest.time}:${latest.event}:${latest.file || ""}:${latest.length || ""}`;
     if (key === lastEventKeyRef.current) return;
     lastEventKeyRef.current = key;
-    if (latest.event === "file_receive_failed") toast("文件接收失败");
+    if (latest.event === "file_receive_failed") toast(text.fileReceiveFailed);
   };
 
   const notifyLastFile = (file?: ManagedFile | null) => {
@@ -319,13 +397,13 @@ function Content() {
     const key = `${file.time}:${file.status}:${file.file}:${file.size || ""}`;
     if (key === lastFileKeyRef.current) return;
     lastFileKeyRef.current = key;
-    if (file.status === "received") toast(`已接收文件：${file.file}`);
-    if (file.status === "failed") toast(`文件接收失败：${file.file}`);
+    if (file.status === "received") toast(`${text.fileReceived}: ${file.file}`);
+    if (file.status === "failed") toast(`${text.fileReceiveFailed}: ${file.file}`);
   };
 
   const run = async (label: string, action: () => Promise<ApiResult | Notebook | ManagedKde>, refreshAfter = false) => {
     if (busyRef.current) {
-      toast("正在处理，请稍等");
+      toast(text.busy);
       return;
     }
     if (!acceptAction()) return;
@@ -337,10 +415,10 @@ function Content() {
     try {
       const result = await action();
       if (!mountedRef.current) return;
-      toast(`${label}${result.ok ? "完成" : `失败：${resultMessage(result)}`}`);
+      toast(`${label} ${result.ok ? text.done : `${text.failed}: ${resultMessage(result)}`}`);
       if (refreshAfter) await refresh();
     } catch (error) {
-      if (mountedRef.current) toast(`${label}失败：${String(error || "未知错误")}`);
+      if (mountedRef.current) toast(`${label} ${text.failed}: ${String(error || text.unknownError)}`);
     } finally {
       busyRef.current = false;
       if (mountedRef.current) {
@@ -358,9 +436,9 @@ function Content() {
     editingRef.current = false;
     skipNextBlurSaveRef.current = true;
     setText("");
-    run("导出日志", async () => {
+    run(text.exportLogs, async () => {
       const result = await exportLogs();
-      if (result.ok && result.path) toast(`日志已导出：${result.path}`);
+      if (result.ok && result.path) toast(`${text.logsExported}: ${result.path}`);
       return result;
     });
   };
@@ -383,29 +461,29 @@ function Content() {
 
   const receiverReady = summary.managed_kde?.running && summary.managed_kde?.udp_working && summary.managed_kde?.tcp_working;
   const managedStatus = summary.managed_kde?.paused
-    ? "桌面模式暂停"
+    ? text.desktopPaused
     : receiverReady
-      ? "KDEck 接收中"
-      : "KDEck 启动中";
+      ? text.receiverReady
+      : text.receiverStarting;
   const device = deviceState(summary.managed_kde);
   const connection = task || managedStatus;
 
   return (
     <>
-      <PanelSection title="连接">
+      <PanelSection title={text.connection}>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy} onClick={() => run("刷新连接", async () => startManagedKde(), true)}>
-            {busy ? connection : "刷新连接"}
+          <ButtonItem layout="below" disabled={busy} onClick={() => run(text.refreshConnection, async () => startManagedKde(), true)}>
+            {busy ? connection : text.refreshConnection}
           </ButtonItem>
         </PanelSectionRow>
-        <DeviceRow label={receiverReady ? device.label : "未连接"} connected={Boolean(receiverReady && device.connected)} />
+        <DeviceRow label={receiverReady ? device.label : text.disconnected} connected={Boolean(receiverReady && device.connected)} />
         <TextRow label="Deck IP" value={formatIp(summary.deck_ips?.primary)} />
       </PanelSection>
 
-      <PanelSection title="剪贴板">
+      <PanelSection title={text.clipboard}>
         <PanelSectionRow>
           <input
-            aria-label="剪贴板"
+            aria-label={text.clipboard}
             value={clipboardText}
             disabled={busy}
             style={inputStyle}
@@ -431,19 +509,19 @@ function Content() {
             layout="below"
             disabled={busy || !clipboardText}
             onClick={() =>
-              run("同步文本框", async () => {
+              run(text.syncText, async () => {
                 const result = await setClipboard(clipboardText);
                 if (result.ok) await saveNotebook(clipboardText);
                 return result;
               })
             }
           >
-            同步文本框
+            {text.syncText}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
-      <PanelSection title="接收文件">
-        <TextRow label="文件" value={formatFileSummary(summary.managed_kde?.last_file, summary.incoming_directories?.items)} />
+      <PanelSection title={text.receiveFile}>
+        <TextRow label={text.file} value={formatFileSummary(summary.managed_kde?.last_file, summary.incoming_directories?.items)} />
       </PanelSection>
     </>
   );

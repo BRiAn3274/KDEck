@@ -15,7 +15,7 @@ KDEck 提交 Decky 插件商店前，按下面顺序检查。
 ```bash
 pnpm run build
 python -m unittest discover -s tests
-python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py tools/package_release.py
+python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py tools/package_release.py tools/kdeck_fake_client.py
 python tools/package_release.py
 ```
 
@@ -26,7 +26,7 @@ python tools/package_release.py
 - `CHANGELOG.md` 已记录本次改动。
 - `plugin.json` 的 `publish.description`、`publish.tags`、`publish.image` 可用。
 - `LICENSE` 存在。
-- `README.md` 面向普通用户，避免塞入内部调试日志。
+- `README.md` 默认为英文主页，`README.zh-CN.md` 提供中文说明。
 - `release/KDEck.zip` 可以手动导入 Decky Loader。
 
 ## 审核说明
