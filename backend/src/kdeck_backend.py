@@ -185,7 +185,46 @@ class KDEckBackend:
         status["desired"] = self.managed_kde_desired
         status["paused"] = self.managed_kde_pause_reason == "desktop_mode"
         status["pause_reason"] = self.managed_kde_pause_reason
+        status["diagnostic_summary"] = self._receiver_diagnostic_summary(status)
         return status
+
+    def _receiver_diagnostic_summary(self, status: dict[str, Any]) -> dict[str, Any]:
+        checks = {
+            "desired": bool(status.get("desired")),
+            "paused": bool(status.get("paused")),
+            "udp": bool(status.get("udp_working")),
+            "tcp": bool(status.get("tcp_working")),
+            "paired": bool(status.get("paired")),
+            "recent_discovery": bool(status.get("last_discovery_received")),
+            "recent_connect_attempt": bool(status.get("last_connect_attempt")),
+            "recent_clipboard": bool(status.get("last_clipboard")),
+            "recent_file": bool(status.get("last_file")),
+        }
+        if checks["paused"]:
+            state = "paused_desktop_mode"
+            message = "桌面模式运行中，KDEck receiver 已暂停。"
+        elif not checks["desired"]:
+            state = "disabled"
+            message = "KDEck receiver 未被请求启动。"
+        elif not checks["udp"] or not checks["tcp"]:
+            state = "listener_unready"
+            message = "KDEck receiver 正在启动或监听失败。"
+        elif not checks["recent_discovery"]:
+            state = "waiting_discovery"
+            message = "KDEck receiver 正在监听，尚未收到外部设备 discovery。"
+        elif checks["paired"]:
+            state = "paired"
+            message = "KDEck receiver 已有可信设备，可接收剪贴板和文件。"
+        else:
+            state = "discovered_unpaired"
+            message = "KDEck receiver 已发现设备，等待配对或可信连接。"
+        return {
+            "state": state,
+            "message": message,
+            "checks": checks,
+            "last_error": status.get("last_error"),
+            "last_connect_error": status.get("last_connect_error"),
+        }
 
     def _ensure_mode_monitor(self) -> None:
         if self.mode_monitor_thread and self.mode_monitor_thread.is_alive():
@@ -616,10 +655,12 @@ class KDEckBackend:
         return {"ok": True, **payload}
 
     def export_logs(self) -> dict[str, Any]:
-        target = self.runtime_dir / f"kdeck-logs-{int(time.time())}.zip"
+        target_dir = self._log_export_dir()
+        target = target_dir / f"kdeck-logs-{int(time.time())}.zip"
         with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             manifest = {
                 "exported_at": int(time.time()),
+                "export_path": str(target),
                 "settings_dir": str(self.settings_dir),
                 "runtime_dir": str(self.runtime_dir),
                 "log_dir": str(self.log_dir) if self.log_dir else None,
@@ -642,6 +683,12 @@ class KDEckBackend:
             for path in self._recent_decky_logs():
                 archive.write(path, arcname=f"decky-log/{path.name}")
         return {"ok": True, "path": str(target)}
+
+    def _log_export_dir(self) -> Path:
+        downloads = Path(COMMON_DIRECTORIES[0])
+        if downloads.exists():
+            return downloads
+        return self.runtime_dir
 
     def cleanup_plugin_data(self, log_dir: Optional[str] = None) -> dict[str, Any]:
         removed = []

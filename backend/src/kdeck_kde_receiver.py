@@ -32,6 +32,9 @@ CAPABILITIES = [
 STARTUP_BROADCAST_DELAYS = (0, 1, 2, 5, 10, 15)
 BROADCAST_INTERVAL_SECONDS = 20
 RECENT_DISCOVERY_DIRECT_SECONDS = 180
+TRUSTED_DEVICE_DIRECT_SECONDS = 7 * 24 * 60 * 60
+PEER_CONNECT_COOLDOWN_SECONDS = 30
+TRUSTED_PEER_CONNECT_COOLDOWN_SECONDS = 5
 MAX_PACKET_BYTES = 64 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 MIN_FREE_SPACE_BYTES = 64 * 1024 * 1024
@@ -277,6 +280,7 @@ class KDEckKdeReceiver:
         interfaces = self._network_interfaces()
         targets = self._broadcast_targets(interfaces)
         direct_targets = self._recent_discovery_targets(interfaces)
+        direct_targets = self._merge_direct_targets(direct_targets, self._trusted_direct_targets(interfaces))
         sent = 0
         failures = []
         for source_ip, address in targets:
@@ -544,6 +548,7 @@ class KDEckKdeReceiver:
         if secure_identity.get("type") == PACKET_IDENTITY:
             secure_body = secure_identity.get("body") or {}
             peer_id = secure_body.get("deviceId") or peer_id
+            self._remember_trusted_device_metadata(peer_id, peer_host, secure_body, connected=True)
             self._write_event(
                 "secure_identity_received",
                 {
@@ -619,10 +624,14 @@ class KDEckKdeReceiver:
                 self._write_event("unpaired", {"device_id": peer_id})
                 return
             trusted = self._trusted_devices()
+            existing = trusted.get(peer_id) if isinstance(trusted.get(peer_id), dict) else {}
             trusted[peer_id] = {
+                **existing,
                 "paired_at": int(time.time()),
                 "fingerprint": fingerprint,
                 "trust_mode": "fingerprint" if fingerprint else "device_id",
+                "last_host": peer_host,
+                "last_connected": int(time.time()),
             }
             self._write_trusted_devices(trusted)
             tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": True}}))
@@ -674,8 +683,9 @@ class KDEckKdeReceiver:
         key = f"{device_id}@{host}:{port}"
         now = time.monotonic()
         previous = self.peer_connect_attempts.get(key)
-        if previous is not None and now - previous < 30:
-            self._write_event("peer_connect_skipped", {"host": host, "port": port, "device_id": device_id, "reason": "cooldown"})
+        cooldown = TRUSTED_PEER_CONNECT_COOLDOWN_SECONDS if self._trusted_devices().get(device_id) else PEER_CONNECT_COOLDOWN_SECONDS
+        if previous is not None and now - previous < cooldown:
+            self._write_event("peer_connect_skipped", {"host": host, "port": port, "device_id": device_id, "reason": "cooldown", "cooldown_seconds": cooldown})
             return False
         self.peer_connect_attempts[key] = now
         return True
@@ -1037,6 +1047,51 @@ class KDEckKdeReceiver:
                     targets.append((source_ip, host, port))
         return targets[:16]
 
+    def _trusted_direct_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str, int]]:
+        now = int(time.time())
+        targets: list[tuple[Optional[str], str, int]] = []
+        seen = set()
+        trusted = self._trusted_devices()
+        for device_id, data in trusted.items():
+            if not isinstance(data, dict):
+                continue
+            host = data.get("last_host")
+            if not host:
+                continue
+            last_seen = int(data.get("last_seen") or data.get("last_connected") or 0)
+            if last_seen and now - last_seen > TRUSTED_DEVICE_DIRECT_SECONDS:
+                continue
+            ports = [int(data.get("udp_source_port") or 0), UDP_PORT]
+            source_ips = self._source_ips_for_host(str(host), interfaces)
+            for port in ports:
+                if not (1 <= port <= 65535):
+                    continue
+                for source_ip in source_ips:
+                    key = (source_ip, str(host), port)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    targets.append((source_ip, str(host), port))
+            self._write_event(
+                "trusted_device_reannounce_target",
+                {"device_id": device_id, "host": host, "ports": ports, "target_count": len(targets)},
+            )
+        return targets[:16]
+
+    def _merge_direct_targets(
+        self,
+        first: list[tuple[Optional[str], str, int]],
+        second: list[tuple[Optional[str], str, int]],
+    ) -> list[tuple[Optional[str], str, int]]:
+        merged: list[tuple[Optional[str], str, int]] = []
+        seen = set()
+        for item in first + second:
+            if item in seen:
+                continue
+            seen.add(item)
+            merged.append(item)
+        return merged[:24]
+
     def _source_ips_for_host(self, host: str, interfaces: list[dict[str, Any]]) -> list[Optional[str]]:
         matches: list[tuple[int, str]] = []
         fallbacks: list[tuple[int, str]] = []
@@ -1139,6 +1194,43 @@ class KDEckKdeReceiver:
             self.diagnostics["last_discovery_received"] = item
             self.diagnostics.setdefault("discovered_devices", {})[device_id] = item
         self._write_event("discovery_received", item)
+        self._remember_trusted_device_metadata(device_id, addr[0], body, connected=False, udp_source_port=addr[1])
+
+    def _remember_trusted_device_metadata(
+        self,
+        device_id: Optional[str],
+        host: str,
+        identity: dict[str, Any],
+        connected: bool,
+        udp_source_port: Optional[int] = None,
+    ) -> None:
+        if not device_id:
+            return
+        trusted = self._trusted_devices()
+        data = trusted.get(device_id)
+        if not isinstance(data, dict):
+            return
+        now = int(time.time())
+        data.update(
+            {
+                "device_name": identity.get("deviceName") or data.get("device_name"),
+                "device_type": identity.get("deviceType") or data.get("device_type"),
+                "protocol_version": identity.get("protocolVersion") or data.get("protocol_version"),
+                "tcp_port": identity.get("tcpPort") or data.get("tcp_port"),
+                "last_host": host,
+                "last_seen": now,
+            }
+        )
+        if udp_source_port:
+            data["udp_source_port"] = udp_source_port
+        if connected:
+            data["last_connected"] = now
+        trusted[device_id] = data
+        self._write_trusted_devices(trusted)
+        self._write_event(
+            "trusted_device_metadata_updated",
+            {"device_id": device_id, "host": host, "connected": connected, "udp_source_port": udp_source_port},
+        )
 
     def _set_diagnostic(self, key: str, value: Any) -> None:
         with self.state_lock:

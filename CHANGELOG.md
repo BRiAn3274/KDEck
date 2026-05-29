@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 - 2026-05-30
+
+- 已配对设备的最近 `host`、UDP 源端口、TCP 端口、设备名和连接时间会写入受信设备状态，用于 receiver 重启或游戏模式恢复后的定向 reannounce。
+- 已配对设备主动连接冷却从普通设备的 30 秒缩短为 5 秒，减少网络抖动后快速重连被 cooldown 拦住的概率。
+- discovery 广播会合并短期发现设备和持久化受信设备目标；即使 receiver 重启，仍会优先向最近可信设备发定向 identity。
+- `managed_kde` 状态新增 `diagnostic_summary`，集中给出 receiver 是否期望运行、是否暂停、UDP/TCP 是否工作、是否发现设备、是否配对、最近剪贴板和文件状态。
+- 补充已配对设备重连、受信设备元数据、诊断 summary 测试。
+- 版本更新到 `0.4.0`。
+
+## 0.3.9 - 2026-05-30
+
+- 新增 `tools/kdeck_fake_client.py`，提供 Windows / 桌面端开发假客户端，可通过真实 UDP、TCP 和 TLS 流程测试 discovery、pair、clipboard、share.request 文件发送和异常 packet 拒绝路径。
+- 假客户端默认使用独立持久化 `device-id` 和自签名证书，不读取或写入 KDE Connect 桌面端配置。
+- 假客户端在 Windows 收不到 UDP identity 回包时，会自动扫描 KDEck TCP `1714-1764` 端口作为兜底。
+- 剪贴板文本框新增隐藏开发命令：输入 `:kdeck export logs` 或 `:kdeck logs` 后按 Enter，可将脱敏日志包导出到 Steam Deck 的 `Downloads` 目录。
+- 手机发来的剪贴板文本继续写入 KDEck 文本框，并同步尝试写入 Deck 当前图形会话剪贴板。
+- README 补充假客户端使用方式。
+- 版本更新到 `0.3.9`。
+
 ## 0.3.8 - 2026-05-29
 
 - 隔离本机桌面模式 KDE Connect discovery：忽略来自 Deck 本机 IP 或 loopback 的 identity，不再把本机桌面端显示为游戏模式里的外部设备。

@@ -99,6 +99,32 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["paused"])
         self.assertEqual(result["pause_reason"], "desktop_mode")
 
+    async def test_managed_status_includes_diagnostic_summary(self):
+        backend = self.make_backend()
+        backend.managed_kde_desired = True
+
+        with mock.patch.object(backend, "_is_desktop_mode_active", return_value=False), mock.patch.object(
+            backend.kde_receiver,
+            "status",
+            return_value={
+                "ok": True,
+                "running": True,
+                "udp_working": True,
+                "tcp_working": True,
+                "paired": False,
+                "last_discovery_received": None,
+                "last_connect_attempt": None,
+                "last_clipboard": None,
+                "last_file": None,
+                "last_error": None,
+                "last_connect_error": None,
+            },
+        ):
+            status = backend.get_managed_kde_status()
+
+        self.assertEqual(status["diagnostic_summary"]["state"], "waiting_discovery")
+        self.assertTrue(status["diagnostic_summary"]["checks"]["udp"])
+
     async def test_incoming_directory_uses_kdeck_receiver_directory(self):
         backend = self.make_backend()
 
@@ -150,6 +176,20 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
             notebook = json.loads(archive.read("clipboard-notebook.redacted.json").decode("utf-8"))
             self.assertEqual(notebook["text_length"], len("secret clipboard"))
             self.assertNotIn("secret clipboard", archive.read("clipboard-notebook.redacted.json").decode("utf-8"))
+
+    async def test_export_logs_prefers_downloads_when_available(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addAsyncCleanup(lambda: temp_dir.cleanup())
+        root = Path(temp_dir.name)
+        downloads = root / "Downloads"
+        downloads.mkdir()
+        backend = KDEckBackend(settings_dir=str(root / "settings"), runtime_dir=str(root / "runtime"))
+
+        with mock.patch("kdeck_backend.COMMON_DIRECTORIES", (str(downloads),)):
+            result = backend.export_logs()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(Path(result["path"]).parent, downloads)
 
 
 if __name__ == "__main__":

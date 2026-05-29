@@ -5,12 +5,13 @@ import {
   staticClasses,
 } from "@decky/ui";
 import { callable, definePlugin, toaster } from "@decky/api";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { FaLink } from "react-icons/fa";
 
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.3.8";
+const APP_VERSION = "0.4.0";
+const EXPORT_LOG_COMMANDS = new Set([":kdeck export logs", ":kdeck logs"]);
 
 type SteamClientLike = {
   System?: {
@@ -132,6 +133,7 @@ const getConnectionSummary = callable<[], ConnectionSummary>("get_connection_sum
 const setClipboard = callable<[text: string], ApiResult>("set_clipboard");
 const getNotebook = callable<[], Notebook>("get_notebook");
 const saveNotebook = callable<[text: string], Notebook>("save_notebook");
+const exportLogs = callable<[], ApiResult & { path?: string }>("export_logs");
 const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
 
 const resultMessage = (result?: ApiResult | Notebook | ManagedKde) =>
@@ -256,6 +258,7 @@ function Content() {
   const initializedClipboardRef = useRef(false);
   const lastEventKeyRef = useRef("");
   const lastFileKeyRef = useRef("");
+  const skipNextBlurSaveRef = useRef(false);
 
   const toast = (body: string) => toaster.toast({ title: "KDEck", body });
 
@@ -347,6 +350,21 @@ function Content() {
     }
   };
 
+  const handleClipboardEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return;
+    const command = clipboardTextRef.current.trim().toLowerCase();
+    if (!EXPORT_LOG_COMMANDS.has(command)) return;
+    event.preventDefault();
+    editingRef.current = false;
+    skipNextBlurSaveRef.current = true;
+    setText("");
+    run("导出日志", async () => {
+      const result = await exportLogs();
+      if (result.ok && result.path) toast(`日志已导出：${result.path}`);
+      return result;
+    });
+  };
+
   useEffect(() => {
     mountedRef.current = true;
     startManagedKde().catch(() => undefined);
@@ -393,6 +411,10 @@ function Content() {
             style={inputStyle}
             onBlur={() => {
               editingRef.current = false;
+              if (skipNextBlurSaveRef.current) {
+                skipNextBlurSaveRef.current = false;
+                return;
+              }
               saveNotebook(clipboardTextRef.current).catch(() => undefined);
             }}
             onFocus={(event) => {
@@ -401,6 +423,7 @@ function Content() {
             }}
             onClick={(event) => showKeyboard(event.currentTarget)}
             onChange={(event) => setText(event.currentTarget.value)}
+            onKeyDown={handleClipboardEnter}
           />
         </PanelSectionRow>
         <PanelSectionRow>

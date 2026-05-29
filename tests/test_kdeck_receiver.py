@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 import unittest
 import sys
 from pathlib import Path
@@ -76,6 +77,16 @@ class ReceiverSecurityTests(unittest.TestCase):
         self.assertTrue(receiver._should_connect_to_peer("192.0.2.2", 1716, identity))
         self.assertFalse(receiver._should_connect_to_peer("192.0.2.2", 1716, identity))
 
+    def test_trusted_peer_connect_cooldown_is_shorter(self):
+        receiver = self.make_receiver()
+        receiver._write_trusted_devices({"phone": {"fingerprint": "abc123"}})
+
+        identity = {"deviceId": "phone", "deviceType": "phone"}
+
+        self.assertTrue(receiver._should_connect_to_peer("192.0.2.2", 1716, identity))
+        with mock.patch("time.monotonic", return_value=time.monotonic() + 6):
+            self.assertTrue(receiver._should_connect_to_peer("192.0.2.2", 1716, identity))
+
     def test_android_devices_are_not_skipped(self):
         receiver = self.make_receiver()
 
@@ -145,6 +156,46 @@ class ReceiverSecurityTests(unittest.TestCase):
             receiver._recent_discovery_targets(interfaces),
             [("192.0.2.144", "192.0.2.153", 50484), ("192.0.2.144", "192.0.2.153", 1716)],
         )
+
+    def test_trusted_direct_targets_survive_receiver_restart_state(self):
+        receiver = self.make_receiver()
+        receiver._write_trusted_devices(
+            {
+                "phone": {
+                    "fingerprint": "abc123",
+                    "last_host": "192.0.2.153",
+                    "udp_source_port": 50484,
+                    "last_seen": 200,
+                }
+            }
+        )
+        interfaces = [{"interface": "wlan0", "address": "192.0.2.144", "prefixlen": 24, "priority": 100}]
+
+        with mock.patch("time.time", return_value=300):
+            targets = receiver._trusted_direct_targets(interfaces)
+
+        self.assertEqual(targets, [("192.0.2.144", "192.0.2.153", 50484), ("192.0.2.144", "192.0.2.153", 1716)])
+
+    def test_trusted_device_metadata_updates_from_discovery(self):
+        receiver = self.make_receiver()
+        receiver._write_trusted_devices({"phone": {"fingerprint": "abc123"}})
+
+        with mock.patch("time.time", return_value=300):
+            receiver._record_discovery_received(
+                ("192.0.2.153", 50484),
+                {
+                    "deviceId": "phone",
+                    "deviceName": "Phone",
+                    "deviceType": "phone",
+                    "tcpPort": 1716,
+                    "protocolVersion": 8,
+                },
+            )
+
+        trusted = receiver._trusted_devices()["phone"]
+        self.assertEqual(trusted["last_host"], "192.0.2.153")
+        self.assertEqual(trusted["udp_source_port"], 50484)
+        self.assertEqual(trusted["device_name"], "Phone")
 
     def test_local_host_detection_uses_receiver_interfaces(self):
         receiver = self.make_receiver()

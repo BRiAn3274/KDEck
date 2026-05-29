@@ -35,6 +35,7 @@ python tools/package_release.py
 - KDEck 只接收手机发送到 Deck 的剪贴板文本和文件，不提供通知、短信、远程输入、媒体控制等完整 KDE Connect 功能。
 - KDEck 使用独立设备 ID、证书和配置目录，不注册 `org.kde.kdeconnect`，不写入桌面模式 KDE Connect 的配对配置。
 - 进入 Plasma 桌面模式时，KDEck 会暂停 receiver 并释放 KDE Connect LAN discovery 端口；回到游戏模式后自动恢复。
+- KDEck 的协议兼容性来自 KDE Connect 生态，但 KDEck 是独立项目，不隶属于 KDE e.V. 或 KDE Connect 项目，也不包含 KDE Connect 源码。
 - `_root` flag 用于在 Decky 后端环境中检测进程、绑定 KDE Connect LAN 端口，并在需要调用系统工具时降权到 `deck` 用户会话；卸载时只停止 KDEck 自己记录并带有 `KDECK_MANAGED_DAEMON=1` 标记的进程。
 - KDEck 不会删除用户下载目录，不会重启系统，不会修改系统服务。
 - 第三方运行时依赖说明见 `THIRD_PARTY_NOTICES.md`。
@@ -64,6 +65,11 @@ Isolation:
 - Does not register org.kde.kdeconnect.
 - Does not write to the desktop KDE Connect pairing configuration.
 - Pauses its receiver in Plasma desktop mode and resumes in game mode.
+
+Attribution:
+- Inspired by and compatible with a small part of the KDE Connect ecosystem.
+- Independent project; not affiliated with KDE e.V. or the KDE Connect project.
+- Does not bundle KDE Connect source code.
 
 Backend:
 - Python backend.
