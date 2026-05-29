@@ -1,6 +1,8 @@
 import unittest
 import tempfile
 import sys
+import json
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -105,6 +107,49 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["items"][0]["path"], str(backend.kde_receiver.incoming_dir))
         self.assertEqual(result["items"][0]["managed_by"], "KDEck")
+
+    async def test_received_clipboard_is_saved_and_written_to_deck_clipboard(self):
+        backend = self.make_backend()
+
+        with mock.patch.object(backend, "set_clipboard_sync", return_value={"ok": True, "length": 5}) as set_clipboard:
+            backend._receive_managed_clipboard("hello", "phone")
+
+        self.assertEqual(backend.get_notebook()["text"], "hello")
+        set_clipboard.assert_called_once_with("hello")
+
+    async def test_export_logs_redacts_sensitive_receiver_state(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addAsyncCleanup(lambda: temp_dir.cleanup())
+        root = Path(temp_dir.name)
+        log_dir = root / "logs"
+        log_dir.mkdir()
+        (log_dir / "latest.log").write_text("decky log", encoding="utf-8")
+        backend = KDEckBackend(settings_dir=str(root / "settings"), runtime_dir=str(root / "runtime"), log_dir=str(log_dir))
+        backend.save_notebook("secret clipboard")
+        backend.history_path.write_text(
+            json.dumps([{"device_id": "phoneabcdef", "path": "/home/deck/Downloads/private.txt", "file_name": "private.txt"}]),
+            encoding="utf-8",
+        )
+        backend.kde_receiver._write_trusted_devices({"phoneabcdef": {"fingerprint": "1234567890abcdef", "trust_mode": "fingerprint", "paired_at": 1}})
+        for name in ("receiver-events.jsonl", "receiver-events.jsonl.1"):
+            (backend.managed_kde_dir / name).write_text("{}", encoding="utf-8")
+
+        result = backend.export_logs()
+
+        with zipfile.ZipFile(result["path"]) as archive:
+            names = set(archive.namelist())
+            self.assertIn("manifest.json", names)
+            self.assertIn("managed-kde/receiver-events.jsonl", names)
+            self.assertIn("managed-kde/receiver-events.jsonl.1", names)
+            self.assertIn("managed-kde/trusted-devices.redacted.json", names)
+            self.assertIn("clipboard-notebook.redacted.json", names)
+            self.assertIn("transfer-history.redacted.json", names)
+            self.assertIn("decky-log/latest.log", names)
+            self.assertNotIn("managed-kde/trusted-devices.json", names)
+            self.assertNotIn("managed-kde/device-id", names)
+            notebook = json.loads(archive.read("clipboard-notebook.redacted.json").decode("utf-8"))
+            self.assertEqual(notebook["text_length"], len("secret clipboard"))
+            self.assertNotIn("secret clipboard", archive.read("clipboard-notebook.redacted.json").decode("utf-8"))
 
 
 if __name__ == "__main__":

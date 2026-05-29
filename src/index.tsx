@@ -10,7 +10,7 @@ import { FaLink } from "react-icons/fa";
 
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.3.7";
+const APP_VERSION = "0.3.8";
 
 type SteamClientLike = {
   System?: {

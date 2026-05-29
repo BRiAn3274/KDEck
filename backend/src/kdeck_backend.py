@@ -69,10 +69,12 @@ class KDEckBackend:
         logger: Any = None,
         settings_dir: Optional[str] = None,
         runtime_dir: Optional[str] = None,
+        log_dir: Optional[str] = None,
     ):
         self.logger = logger
         self.settings_dir = Path(settings_dir or "/tmp/kdeck-settings")
         self.runtime_dir = Path(runtime_dir or "/tmp/kdeck-runtime")
+        self.log_dir = Path(log_dir) if log_dir else None
         self.history_path = self.settings_dir / "transfer-history.json"
         self.notebook_path = self.settings_dir / "clipboard-notebook.json"
         self.daemon_pid_path = self.runtime_dir / "kdeconnectd.pid"
@@ -239,8 +241,14 @@ class KDEckBackend:
         if not text:
             return
         self.save_notebook(text)
+        clipboard_result = self.set_clipboard_sync(text)
         if self.logger:
-            self.logger.info("KDEck managed KDE received clipboard, device=%s length=%s", device_id, len(text))
+            self.logger.info(
+                "KDEck managed KDE received clipboard, device=%s length=%s clipboard=%s",
+                device_id,
+                len(text),
+                clipboard_result.get("ok"),
+            )
 
     async def diagnose(self) -> dict[str, Any]:
         status = await self.get_status()
@@ -472,6 +480,9 @@ class KDEckBackend:
         }
 
     async def set_clipboard(self, text: str) -> dict[str, Any]:
+        return self.set_clipboard_sync(text)
+
+    def set_clipboard_sync(self, text: str) -> dict[str, Any]:
         script = (
             "import sys, tkinter as tk\n"
             "data=sys.stdin.read()\n"
@@ -479,7 +490,7 @@ class KDEckBackend:
             "root.clipboard_clear(); root.clipboard_append(data); root.update()\n"
             "root.destroy()\n"
         )
-        result = await self._run(["python3", "-c", script], input_text=text, timeout=5)
+        result = self._run_sync(["python3", "-c", script], input_text=text, timeout=5)
         if not result.ok:
             return self._error("clipboard_write_failed", "写入 Deck 当前剪贴板失败。", command=result.to_dict())
         return {"ok": True, "length": len(text)}
@@ -607,16 +618,29 @@ class KDEckBackend:
     def export_logs(self) -> dict[str, Any]:
         target = self.runtime_dir / f"kdeck-logs-{int(time.time())}.zip"
         with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for path in (self.daemon_log_path, self.history_path, self.notebook_path, self.daemon_pid_path):
+            manifest = {
+                "exported_at": int(time.time()),
+                "settings_dir": str(self.settings_dir),
+                "runtime_dir": str(self.runtime_dir),
+                "log_dir": str(self.log_dir) if self.log_dir else None,
+                "receiver": self.get_managed_kde_status(),
+            }
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            for path in (self.daemon_log_path, self.daemon_pid_path):
                 if path.exists():
-                    archive.write(path, arcname=path.name)
-            for path in (
-                self.managed_kde_dir / "receiver-events.jsonl",
-                self.managed_kde_dir / "trusted-devices.json",
-                self.managed_kde_dir / "device-id",
-            ):
+                    archive.write(path, arcname=f"runtime/{path.name}")
+            for path in self._receiver_event_logs():
                 if path.exists():
                     archive.write(path, arcname=f"managed-kde/{path.name}")
+            if self.history_path.exists():
+                archive.writestr("transfer-history.redacted.json", self._redacted_json_file(self.history_path, {"device_id", "path"}))
+            if self.notebook_path.exists():
+                archive.writestr("clipboard-notebook.redacted.json", self._redacted_notebook())
+            trusted = self._redacted_trusted_devices()
+            if trusted is not None:
+                archive.writestr("managed-kde/trusted-devices.redacted.json", json.dumps(trusted, ensure_ascii=False, indent=2))
+            for path in self._recent_decky_logs():
+                archive.write(path, arcname=f"decky-log/{path.name}")
         return {"ok": True, "path": str(target)}
 
     def cleanup_plugin_data(self, log_dir: Optional[str] = None) -> dict[str, Any]:
@@ -714,6 +738,35 @@ class KDEckBackend:
             returncode=proc.returncode,
             stdout=stdout.decode("utf-8", errors="replace"),
             stderr=stderr.decode("utf-8", errors="replace"),
+        )
+
+    def _run_sync(
+        self,
+        command: list[str],
+        timeout: int = 15,
+        input_text: Optional[str] = None,
+    ) -> CommandResult:
+        env = self._command_env()
+        actual_command = self._as_deck_user_command(command)
+        try:
+            proc = subprocess.run(
+                actual_command,
+                input=input_text.encode("utf-8") if input_text is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout or "")
+            stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr or "")
+            return CommandResult(command=actual_command, returncode=124, stdout=stdout, stderr=(stderr + "\nCommand timed out.").strip())
+        return CommandResult(
+            command=actual_command,
+            returncode=proc.returncode,
+            stdout=proc.stdout.decode("utf-8", errors="replace"),
+            stderr=proc.stderr.decode("utf-8", errors="replace"),
         )
 
     def _spawn_daemon(self, daemon_path: str) -> dict[str, Any]:
@@ -943,6 +996,66 @@ class KDEckBackend:
         except OSError:
             return None
         return None
+
+    def _receiver_event_logs(self) -> list[Path]:
+        logs = list(self.managed_kde_dir.glob("receiver-events.jsonl*"))
+        return sorted(logs, key=lambda path: (path.name != "receiver-events.jsonl", path.name))
+
+    def _recent_decky_logs(self, limit: int = 2) -> list[Path]:
+        if not self.log_dir or not self.log_dir.exists():
+            return []
+        logs = [path for path in self.log_dir.glob("*.log") if path.is_file()]
+        return sorted(logs, key=lambda path: path.stat().st_mtime, reverse=True)[:limit]
+
+    def _redacted_json_file(self, path: Path, redacted_keys: set[str]) -> str:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return "{}"
+        return json.dumps(self._redact_json(data, redacted_keys), ensure_ascii=False, indent=2)
+
+    def _redacted_json_value(self, value: Any) -> str:
+        text = str(value or "")
+        if not text:
+            return ""
+        return f"{text[:8]}..." if len(text) > 8 else "***"
+
+    def _redact_json(self, data: Any, redacted_keys: set[str]) -> Any:
+        if isinstance(data, dict):
+            return {
+                key: self._redacted_json_value(value) if key in redacted_keys else self._redact_json(value, redacted_keys)
+                for key, value in data.items()
+            }
+        if isinstance(data, list):
+            return [self._redact_json(item, redacted_keys) for item in data]
+        return data
+
+    def _redacted_notebook(self) -> str:
+        try:
+            data = json.loads(self.notebook_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return "{}"
+        text = str(data.get("text", ""))
+        payload = {"updated_at": data.get("updated_at"), "text_length": len(text)}
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def _redacted_trusted_devices(self) -> Optional[dict[str, Any]]:
+        if not (self.managed_kde_dir / "trusted-devices.json").exists():
+            return None
+        trusted = self.kde_receiver._trusted_devices()
+        devices = []
+        for device_id, value in trusted.items():
+            item = value if isinstance(value, dict) else {}
+            fingerprint = str(item.get("fingerprint") or "")
+            devices.append(
+                {
+                    "device_id_prefix": str(device_id)[:8],
+                    "trust_mode": item.get("trust_mode"),
+                    "fingerprint_prefix": fingerprint[:12] if fingerprint else None,
+                    "paired_at": item.get("paired_at"),
+                }
+            )
+        return {"device_count": len(devices), "devices": devices}
 
     def _error(self, code: str, message: str, **details: Any) -> dict[str, Any]:
         if self.logger:

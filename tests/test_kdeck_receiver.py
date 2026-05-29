@@ -146,6 +146,13 @@ class ReceiverSecurityTests(unittest.TestCase):
             [("192.0.2.144", "192.0.2.153", 50484), ("192.0.2.144", "192.0.2.153", 1716)],
         )
 
+    def test_local_host_detection_uses_receiver_interfaces(self):
+        receiver = self.make_receiver()
+
+        with mock.patch.object(receiver, "_network_interfaces", return_value=[{"address": "192.0.2.144"}]):
+            self.assertTrue(receiver._is_local_host("192.0.2.144"))
+            self.assertFalse(receiver._is_local_host("192.0.2.153"))
+
     def test_decode_packet_rejects_oversized_packet(self):
         receiver = self.make_receiver()
 

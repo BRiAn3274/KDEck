@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.8 - 2026-05-29
+
+- 隔离本机桌面模式 KDE Connect discovery：忽略来自 Deck 本机 IP 或 loopback 的 identity，不再把本机桌面端显示为游戏模式里的外部设备。
+- incoming TCP 增加本机来源拒绝，避免桌面 KDE Connect 进程从本机回连 KDEck receiver。
+- 手机发送剪贴板后，后端继续保存到 KDEck 文本框，同时尝试写入 Deck 当前图形会话剪贴板；前端沿用现有轮询 toast，不新增 UI 入口。
+- 优化隐藏日志导出：包含 manifest、receiver 轮转日志、最近 Decky 主日志、脱敏剪贴板摘要、脱敏传输历史和脱敏受信设备摘要。
+- 日志导出不再默认包含 `device-id`、`trusted-devices.json`、证书或私钥，减少排障包泄露风险。
+- 补充本机隔离、剪贴板同步和日志导出脱敏测试。
+- 版本更新到 `0.3.8`。
+
 ## 0.3.7 - 2026-05-29
 
 - 不改变现有配对接受策略，先补强协议输入保护和回归测试。

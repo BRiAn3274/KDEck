@@ -17,6 +17,7 @@ class Plugin:
             logger=decky.logger,
             settings_dir=getattr(decky, "DECKY_PLUGIN_SETTINGS_DIR", None),
             runtime_dir=getattr(decky, "DECKY_PLUGIN_RUNTIME_DIR", None),
+            log_dir=getattr(decky, "DECKY_PLUGIN_LOG_DIR", None),
         )
         self.backend.start_managed_kde()
         decky.logger.info("KDEck backend loaded")

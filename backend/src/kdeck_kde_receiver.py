@@ -235,6 +235,12 @@ class KDEckKdeReceiver:
             tcp_port = int(body.get("tcpPort") or 0)
             if not device_id or device_id == self.device_id or not (1714 <= tcp_port <= 1764):
                 continue
+            if self._is_local_host(addr[0]):
+                self._write_event(
+                    "discovery_ignored",
+                    {"host": addr[0], "device_id": device_id, "device_name": body.get("deviceName"), "reason": "local_host"},
+                )
+                continue
             self._record_discovery_received(addr, body)
             reply_ports = self._identity_reply_ports(addr[1], body)
             reply_strategy = "source_port_only" if len(reply_ports) == 1 else "source_port_and_1716"
@@ -364,6 +370,10 @@ class KDEckKdeReceiver:
     def _handle_incoming_tcp(self, conn: socket.socket, addr: tuple[str, int]) -> None:
         try:
             self._write_event("incoming_tcp_connected", {"host": addr[0], "port": addr[1]})
+            if self._is_local_host(addr[0]):
+                self._write_event("incoming_tcp_rejected", {"host": addr[0], "port": addr[1], "reason": "local_host"})
+                conn.close()
+                return
             identity = self._read_plain_packet(conn)
             body = identity.get("body") or {}
             peer_id = body.get("deviceId")
@@ -1092,6 +1102,23 @@ class KDEckKdeReceiver:
         if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
             return False
         return ip not in ipaddress.ip_network("198.18.0.0/15")
+
+    def _local_ipv4_addresses(self) -> set[str]:
+        addresses = {"127.0.0.1"}
+        for iface in self._network_interfaces():
+            address = iface.get("address")
+            if address:
+                addresses.add(str(address))
+        return addresses
+
+    def _is_local_host(self, host: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        if ip.is_loopback:
+            return True
+        return str(ip) in self._local_ipv4_addresses()
 
     def _record_discovery_received(self, addr: tuple[str, int], body: dict[str, Any]) -> None:
         device_id = body.get("deviceId")
