@@ -749,6 +749,7 @@ class KDEckBackend:
         return {"ok": True, **payload}
 
     def export_logs(self) -> dict[str, Any]:
+        self.kde_receiver._flush_event_buffer()
         target_dir = self._log_export_dir()
         target = target_dir / f"kdeck-logs-{int(time.time())}.zip"
         with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
