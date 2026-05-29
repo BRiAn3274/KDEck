@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.3 - 2026-05-30
+
+- 配对安全加固：首次配对不再自动接受，需用户在 Deck 端点"接受配对"确认后才写入白名单；已配对设备后续连接自动通过。
+- 线程安全修复：receiver TCP 端口、连接冷却字典、匿名连接线程加锁保护，避免竞态条件。
+- 匿名连接线程改为追踪管理，receiver 停止时正确 join 清理，防止 socket 泄漏。
+- 事件日志改为内存缓冲写入（64 条或停止时刷盘），减少 eMMC/SD 卡写放大。
+- 剪贴板读取优先使用 `wl-paste`/`wl-copy` → `xclip` → tkinter 降级，兼容更多环境。
+- `_tail_file` 改为 seek 尾部扫描替代全量读取，降低大日志文件内存开销。
+- 接口分类逻辑（`interface_path_type` / `interface_priority` / `is_usable_ipv4`）提取为模块级公共函数，消除 `kdeck_backend.py` 和 `kdeck_kde_receiver.py` 之间的重复代码。
+- `_is_owned_plugin_dir` 改为精确目录名匹配（`== "kdeck"` 或 `startswith("kdeck-")`），避免误删包含 "kdeck" 字符串的无关目录。
+- 后端错误信息全部改为英文 fallback，前端 `errors` 字典补全中英双语映射，非中文用户不再看到中文错误提示。
+- 前端拆分为 `types.ts` / `i18n.ts` / `utils.ts` / `components.tsx` / `index.tsx` 五文件结构。
+- 新增 ruff lint 配置（`pyproject.toml`）和 GitHub Actions CI（`test.yml`），所有代码通过 lint。
+- 版本更新到 `0.4.3`。
+
 ## 0.4.2 - 2026-05-30
 
 - 新增 GitHub Issues 模板：Bug report 和 Test report，便于收集 Deck 型号、SteamOS 通道、手机系统、KDE Connect 版本、网络环境和日志包。

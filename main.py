@@ -7,7 +7,7 @@ import decky
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(PLUGIN_DIR, "backend", "src"))
 
-from kdeck_backend import KDEckBackend
+from kdeck_backend import KDEckBackend  # noqa: E402
 
 
 class Plugin:
@@ -56,6 +56,12 @@ class Plugin:
 
     async def stop_managed_kde(self) -> dict:
         return self.backend.stop_managed_kde()
+
+    async def accept_pending_pair(self) -> dict:
+        return self.backend.accept_pending_pair()
+
+    async def reject_pending_pair(self) -> dict:
+        return self.backend.reject_pending_pair()
 
     async def get_managed_kde_status(self) -> dict:
         return self.backend.get_managed_kde_status()

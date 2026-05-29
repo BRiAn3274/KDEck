@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 UDP_PORT = 1716
 TCP_PORT_MIN = 1714
 TCP_PORT_MAX = 1764

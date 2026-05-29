@@ -1,14 +1,14 @@
 import json
+import sys
 import tempfile
 import time
 import unittest
-import sys
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend" / "src"))
 
-from kdeck_kde_receiver import EVENT_LOG_MAX_BYTES, KDEckKdeReceiver, MAX_FILE_BYTES, MAX_PACKET_BYTES
+from kdeck_kde_receiver import EVENT_LOG_MAX_BYTES, MAX_FILE_BYTES, MAX_PACKET_BYTES, KDEckKdeReceiver
 
 
 class ReceiverSecurityTests(unittest.TestCase):
