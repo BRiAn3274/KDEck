@@ -80,7 +80,7 @@ This is the user's `Downloads` directory in Steam Deck desktop mode.
 
 ## Current Status
 
-KDEck is still early software. Clipboard receive and file receive have been verified on real hardware, but automatic discovery may still vary across networks. Manual IP entry remains the fallback.
+KDEck is under active development. Clipboard receive and file receive have been verified on real hardware with multiple phone models. Automatic discovery works on most home Wi-Fi networks; manual IP entry remains the fallback for restricted or multi-interface environments.
 
 KDEck uses its own device ID, certificate, and configuration directory. It does not register `org.kde.kdeconnect` and does not write to the desktop-mode KDE Connect pairing configuration.
 
@@ -107,6 +107,7 @@ Local checks:
 pnpm run build
 python -m unittest discover -s tests
 python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py tools/package_release.py tools/kdeck_fake_client.py
+ruff check
 python tools/package_release.py
 ```
 
@@ -116,7 +117,7 @@ Development fake client:
 python tools/kdeck_fake_client.py discover --host 192.0.2.37
 python tools/kdeck_fake_client.py pair --host 192.0.2.37
 python tools/kdeck_fake_client.py clipboard --host 192.0.2.37 --pair --text "hello from pc"
-python tools/kdeck_fake_client.py send-file --host 192.0.2.37 --pair --file ./test.txt
+python tools/kdeck_fake_client.py send-file --host 192.0.2.37 --pair --file ./sample.txt
 python tools/kdeck_fake_client.py bad-packet --host 192.0.2.37 bad-body
 ```
 

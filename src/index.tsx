@@ -21,7 +21,7 @@ import { DeviceRow, TextRow } from "./components";
 
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.4.3";
+const APP_VERSION = "0.5.2";
 
 const getConnectionSummary = callable<[], ConnectionSummary>("get_connection_summary");
 const setClipboard = callable<[text: string], ApiResult>("set_clipboard");
