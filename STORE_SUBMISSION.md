@@ -16,6 +16,7 @@ KDEck 提交 Decky 插件商店前，按下面顺序检查。
 pnpm run build
 python -m unittest discover -s tests
 python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py tools/package_release.py tools/kdeck_fake_client.py
+ruff check
 python tools/package_release.py
 ```
 

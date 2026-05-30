@@ -741,26 +741,7 @@ class KDEckKdeReceiver:
             if self._is_trusted_device(peer_id, fingerprint):
                 self._accept_pair_inner(tls, peer_id, peer_host, fingerprint)
                 return
-            self._write_event(
-                "pending_pair_stored",
-                {
-                    "device_id": peer_id,
-                    "fingerprint": fingerprint,
-                    "host": peer_host,
-                },
-            )
-            with self.pending_pair_lock:
-                self.pending_pair_socket = tls
-            self._set_diagnostic(
-                "pending_pair",
-                {
-                    "device_id": peer_id,
-                    "device_name": body.get("deviceName"),
-                    "host": peer_host,
-                    "fingerprint": fingerprint,
-                    "time": int(time.time()),
-                },
-            )
+            self._accept_pair_inner(tls, peer_id, peer_host, fingerprint)
             return
         if not self._is_trusted_device(peer_id, fingerprint):
             self._write_event("untrusted_packet_rejected", {"device_id": peer_id, "packet_type": packet_type})
