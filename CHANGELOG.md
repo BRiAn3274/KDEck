@@ -2,247 +2,246 @@
 
 ## 0.5.2 - 2026-05-30
 
-- 前端版本号修正：`APP_VERSION` 与 `package.json` 同步为 0.5.2。
-- 默认自动接受配对：非信任设备直接 auto-accept，不再存入 pending_pair，连接体验与 v0.4.2 及更早版本一致。
-- README 状态描述更新，反映当前成熟度；`STORE_SUBMISSION.md` 验证步骤补充 ruff check。
-- 仓库分支整理：清理已过期的远程跟踪和本地分支。
+- Frontend version fix: `APP_VERSION` now matches `package.json` at 0.5.2.
+- Auto-accept pairing: non-trusted devices are now auto-accepted directly instead of being stored as pending_pair. Connection experience matches v0.4.2 and earlier.
+- README status descriptions updated to reflect current maturity. `STORE_SUBMISSION.md` verification steps now include ruff check.
+- Branch cleanup: removed stale remote tracking and local branches.
 
 ## 0.5.1 - 2026-05-30
 
-- 稳定性收敛：默认保持自动接受配对，新增设备连接体验与旧版一致；撤销未完成的实验性手动确认开关。
-- 诊断日志修复：导出日志包前强制刷盘事件缓冲区，确保 zip 内包含最新 TCP/TLS/pair 事件。
-- 仓库清理：移除误入版本控制的 `test.txt`。
-- CI 保留：GitHub Actions 测试工作流继续维护，后续自动跑测试。
-- 前端结构整理：保留 types.ts / i18n.ts / utils.ts / components.tsx 拆分，不改 UI 行为。
-- 安全修复保留：`_tail_file()` 尾部读取、`_is_owned_plugin_dir()` 精确匹配、剪贴板降级链、线程锁保护和 join 清理。
+- Stability convergence: default auto-accept pairing restored. New device connection experience matches previous versions. Reverted unfinished manual confirmation experiment.
+- Diagnostic log fix: event buffer is flushed before log export, ensuring the zip contains the latest TCP/TLS/pair events.
+- Repo cleanup: removed `test.txt` accidentally tracked in version control.
+- CI retained: GitHub Actions test workflow continues to be maintained for automated testing.
+- Frontend structure retained: types.ts / i18n.ts / utils.ts / components.tsx split kept without UI behavior changes.
+- Safety fixes retained: `_tail_file()` seek-to-end scanning, `_is_owned_plugin_dir()` exact name matching, clipboard fallback chain, thread lock protection, and join cleanup.
 
 ## 0.4.3 - 2026-05-30
 
-- 配对安全加固：首次配对不再自动接受，需用户在 Deck 端点"接受配对"确认后才写入白名单；已配对设备后续连接自动通过。
-- 线程安全修复：receiver TCP 端口、连接冷却字典、匿名连接线程加锁保护，避免竞态条件。
-- 匿名连接线程改为追踪管理，receiver 停止时正确 join 清理，防止 socket 泄漏。
-- 事件日志改为内存缓冲写入（64 条或停止时刷盘），减少 eMMC/SD 卡写放大。
-- 剪贴板读取优先使用 `wl-paste`/`wl-copy` → `xclip` → tkinter 降级，兼容更多环境。
-- `_tail_file` 改为 seek 尾部扫描替代全量读取，降低大日志文件内存开销。
-- 接口分类逻辑（`interface_path_type` / `interface_priority` / `is_usable_ipv4`）提取为模块级公共函数，消除 `kdeck_backend.py` 和 `kdeck_kde_receiver.py` 之间的重复代码。
-- `_is_owned_plugin_dir` 改为精确目录名匹配（`== "kdeck"` 或 `startswith("kdeck-")`），避免误删包含 "kdeck" 字符串的无关目录。
-- 后端错误信息全部改为英文 fallback，前端 `errors` 字典补全中英双语映射，非中文用户不再看到中文错误提示。
-- 前端拆分为 `types.ts` / `i18n.ts` / `utils.ts` / `components.tsx` / `index.tsx` 五文件结构。
-- 新增 ruff lint 配置（`pyproject.toml`）和 GitHub Actions CI（`test.yml`），所有代码通过 lint。
-- 版本更新到 `0.4.3`。
+- Pairing security hardening: first-time pairing no longer auto-accepted. User must confirm "Accept Pair" on Deck before writing to trusted devices whitelist; previously paired devices continue to auto-accept.
+- Thread safety: receiver TCP port, connection cooldown dict, and anonymous connection threads now protected by locks to avoid race conditions.
+- Anonymous connection threads now tracked for management; properly joined on receiver stop to prevent socket leaks.
+- Event log changed to in-memory buffered writes (64 entries or flush on stop) to reduce eMMC/SD card write amplification.
+- Clipboard read now uses `wl-paste`/`wl-copy` → `xclip` → tkinter fallback chain for broader environment compatibility.
+- `_tail_file` changed to seek-to-end scanning instead of full file reads, reducing memory overhead on large log files.
+- Interface classification logic (`interface_path_type` / `interface_priority` / `is_usable_ipv4`) extracted as module-level functions, eliminating duplicate code between `kdeck_backend.py` and `kdeck_kde_receiver.py`.
+- `_is_owned_plugin_dir` changed to exact directory name matching (`== "kdeck"` or `startswith("kdeck-")`) to avoid accidentally removing unrelated directories containing "kdeck" in their names.
+- Backend error messages switched to English fallback. Frontend `errors` dictionary now has complete Chinese-English bilingual mappings. Non-Chinese users no longer see Chinese error messages.
+- Frontend split into five files: `types.ts` / `i18n.ts` / `utils.ts` / `components.tsx` / `index.tsx`.
+- Added ruff lint configuration (`pyproject.toml`) and GitHub Actions CI (`test.yml`). All code passes lint.
+- Version bumped to `0.4.3`.
 
 ## 0.4.2 - 2026-05-30
 
-- 新增 GitHub Issues 模板：Bug report 和 Test report，便于收集 Deck 型号、SteamOS 通道、手机系统、KDE Connect 版本、网络环境和日志包。
-- 剪贴板隐藏开发命令扩展为 `:kdeck help`、`:kdeck status`、`:kdeck devices`、`:kdeck reannounce`、`:kdeck logs`、`:kdeck export logs` 和 `:kdeck share logs`。
-- `:kdeck share logs` 会导出脱敏日志到 Downloads，并明确说明当前隔离 receiver 不直接反向发送日志到手机或电脑。
-- 诊断摘要补充最近 TCP 成功、TLS 成功/失败、配对、trusted-device reannounce 和文件 payload 错误信息。
-- receiver 启动前 30 秒增加 trusted-device reannounce 节奏；从桌面模式恢复到游戏模式后会立即触发一轮可信设备 reannounce。
-- README / README.zh-CN 补充隐藏命令用途、限制和诊断字段说明。
-- 版本更新到 `0.4.2`。
+- Added GitHub Issues templates: Bug report and Test report for collecting Deck model, SteamOS channel, phone OS, KDE Connect version, network environment, and log packages.
+- Clipboard hidden dev commands expanded to `:kdeck help`, `:kdeck status`, `:kdeck devices`, `:kdeck reannounce`, `:kdeck logs`, `:kdeck export logs`, and `:kdeck share logs`.
+- `:kdeck share logs` exports redacted logs to Downloads and explicitly notes that the isolated receiver does not directly reverse-send logs to a phone or computer.
+- Diagnostic summary now includes recent TCP successes, TLS successes/failures, pairing, trusted-device reannounce, and file payload error info.
+- Receiver adds trusted-device reannounce cadence during the first 30 seconds after start; immediately triggers a trusted-device reannounce upon returning from desktop mode to game mode.
+- README / README.zh-CN updated with hidden command usage, limitations, and diagnostic field descriptions.
+- Version bumped to `0.4.2`.
 
 ## 0.4.1 - 2026-05-30
 
-- GitHub 默认 `README.md` 改为英文主页，并新增 `README.zh-CN.md` 作为中文说明。
-- 插件前端新增轻量中英双语文本，根据 `navigator.language` 自动选择中文或英文；中文环境显示中文，其他环境显示英文。
-- 前端常见后端错误码增加英文显示兜底，减少英文界面直接露出中文错误信息。
-- 发布打包脚本同步包含 `README.zh-CN.md`。
-- 版本更新到 `0.4.1`。
+- Default `README.md` changed to English homepage. Added `README.zh-CN.md` for Chinese documentation.
+- Plugin frontend now has lightweight bilingual text, auto-selecting Chinese or English based on `navigator.language`. Chinese environments show Chinese; other environments show English.
+- Frontend adds English fallback display for common backend error codes, reducing raw Chinese error messages in English interfaces.
+- Release packaging script now includes `README.zh-CN.md`.
+- Version bumped to `0.4.1`.
 
 ## 0.4.0 - 2026-05-30
 
-- 已配对设备的最近 `host`、UDP 源端口、TCP 端口、设备名和连接时间会写入受信设备状态，用于 receiver 重启或游戏模式恢复后的定向 reannounce。
-- 已配对设备主动连接冷却从普通设备的 30 秒缩短为 5 秒，减少网络抖动后快速重连被 cooldown 拦住的概率。
-- discovery 广播会合并短期发现设备和持久化受信设备目标；即使 receiver 重启，仍会优先向最近可信设备发定向 identity。
-- `managed_kde` 状态新增 `diagnostic_summary`，集中给出 receiver 是否期望运行、是否暂停、UDP/TCP 是否工作、是否发现设备、是否配对、最近剪贴板和文件状态。
-- 补充已配对设备重连、受信设备元数据、诊断 summary 测试。
-- 版本更新到 `0.4.0`。
+- Paired device's most recent host, UDP source port, TCP port, device name, and connection time are now written to trusted device state for targeted reannounce after receiver restart or game mode recovery.
+- Paired device active connection cooldown reduced from 30 seconds to 5 seconds for regular devices, reducing the chance of fast reconnection being blocked by cooldown after network jitter.
+- Discovery broadcast now merges short-term discovered devices and persistent trusted device targets. Even after receiver restart, directional identity is preferentially sent to the most recent trusted devices.
+- `managed_kde` status now includes `diagnostic_summary`, centrally reporting whether the receiver is expected to run, whether it is paused, whether UDP/TCP is working, whether devices are discovered, whether paired, and recent clipboard and file status.
+- Added tests for paired device reconnection, trusted device metadata, and diagnostic summary.
+- Version bumped to `0.4.0`.
 
 ## 0.3.9 - 2026-05-30
 
-- 新增 `tools/kdeck_fake_client.py`，提供 Windows / 桌面端开发假客户端，可通过真实 UDP、TCP 和 TLS 流程测试 discovery、pair、clipboard、share.request 文件发送和异常 packet 拒绝路径。
-- 假客户端默认使用独立持久化 `device-id` 和自签名证书，不读取或写入 KDE Connect 桌面端配置。
-- 假客户端在 Windows 收不到 UDP identity 回包时，会自动扫描 KDEck TCP `1714-1764` 端口作为兜底。
-- 剪贴板文本框新增隐藏开发命令：输入 `:kdeck export logs` 或 `:kdeck logs` 后按 Enter，可将脱敏日志包导出到 Steam Deck 的 `Downloads` 目录。
-- 手机发来的剪贴板文本继续写入 KDEck 文本框，并同步尝试写入 Deck 当前图形会话剪贴板。
-- README 补充假客户端使用方式。
-- 版本更新到 `0.3.9`。
+- Added `tools/kdeck_fake_client.py`, a Windows/desktop development fake client that tests discovery, pair, clipboard, share.request file sending, and malformed packet rejection paths through real UDP, TCP, and TLS flows.
+- Fake client uses its own persistent `device-id` and self-signed certificate by default. Does not read or write KDE Connect desktop configuration.
+- Fake client auto-scans KDEck TCP `1714-1764` ports as a fallback when Windows cannot receive UDP identity replies.
+- Clipboard text field now supports hidden dev commands: type `:kdeck export logs` or `:kdeck logs` and press Enter to export a redacted log package to the Steam Deck `Downloads` directory.
+- Clipboard text sent from phone continues to be written into the KDEck text field and simultaneously attempts to write to the Deck's current graphical session clipboard.
+- README updated with fake client usage instructions.
+- Version bumped to `0.3.9`.
 
 ## 0.3.8 - 2026-05-29
 
-- 隔离本机桌面模式 KDE Connect discovery：忽略来自 Deck 本机 IP 或 loopback 的 identity，不再把本机桌面端显示为游戏模式里的外部设备。
-- incoming TCP 增加本机来源拒绝，避免桌面 KDE Connect 进程从本机回连 KDEck receiver。
-- 手机发送剪贴板后，后端继续保存到 KDEck 文本框，同时尝试写入 Deck 当前图形会话剪贴板；前端沿用现有轮询 toast，不新增 UI 入口。
-- 优化隐藏日志导出：包含 manifest、receiver 轮转日志、最近 Decky 主日志、脱敏剪贴板摘要、脱敏传输历史和脱敏受信设备摘要。
-- 日志导出不再默认包含 `device-id`、`trusted-devices.json`、证书或私钥，减少排障包泄露风险。
-- 补充本机隔离、剪贴板同步和日志导出脱敏测试。
-- 版本更新到 `0.3.8`。
+- Isolate local desktop-mode KDE Connect discovery: ignore identities from Deck's own IP or loopback, no longer showing the local desktop client as an external device in game mode.
+- Incoming TCP now rejects connections from local sources, preventing desktop KDE Connect processes from connecting back to the KDEck receiver from the same machine.
+- After phone sends clipboard, backend continues to save to KDEck text field while also attempting to write to the Deck's graphical session clipboard. Frontend uses existing polling toast, no new UI entry.
+- Optimized hidden log export: includes manifest, receiver rotated logs, recent Decky main logs, redacted clipboard summary, redacted transfer history, and redacted trusted device summary.
+- Log export no longer includes `device-id`, `trusted-devices.json`, certificates, or private keys by default, reducing troubleshooting package leak risk.
+- Added tests for local isolation, clipboard sync, and log export redaction.
+- Version bumped to `0.3.8`.
 
 ## 0.3.7 - 2026-05-29
 
-- 不改变现有配对接受策略，先补强协议输入保护和回归测试。
-- packet 解码新增大小上限、JSON 结构校验和结构化拒绝事件，避免异常 packet 进入协议处理。
-- 文件接收新增 `payloadSize` 校验、2 GiB 上限、剩余空间检查和 `.part` 临时文件写入，完成后再替换到最终文件。
-- 文件接收失败事件细分为文件过大、空间不足、payload 不完整、无效 payload size 和 TLS/写入失败。
-- receiver 事件日志新增简单轮转，`receiver-events.jsonl` 超过 2 MiB 后保留 3 份历史文件。
-- 补充 packet 限制、文件保护、`.part` 避让、最近 discovery 定向回包和日志轮转测试。
-- 版本更新到 `0.3.7`。
+- Without changing existing pairing acceptance policy, first strengthen protocol input protection and regression tests.
+- Packet decoding now enforces maximum size, JSON structure validation, and structured rejection events to prevent malformed packets from entering protocol handling.
+- File receive now validates `payloadSize`, enforces 2 GiB limit, checks available disk space, and writes to `.part` temporary file before replacing the final file.
+- File receive failure events now broken down into file too large, insufficient space, incomplete payload, invalid payload size, and TLS/write failure.
+- Receiver event log now has simple rotation: `receiver-events.jsonl` keeps 3 historical backups when exceeding 2 MiB.
+- Added tests for packet limits, file protection, `.part` avoidance, recent discovery directional reply, and log rotation.
+- Version bumped to `0.3.7`.
 
 ## 0.3.6 - 2026-05-28
 
-- 检测到 Plasma 桌面模式时自动暂停 KDEck receiver，释放 KDE Connect LAN discovery 端口，避免干扰桌面模式官方 KDE Connect。
-- 离开桌面模式后，如插件仍处于期望接收状态，会自动恢复 KDEck receiver。
-- discovery 启动广播改为 `0 秒、1 秒、2 秒、5 秒、10 秒、15 秒`，常规广播间隔改为 20 秒。
-- 对最近发现过的设备增加短期定向 identity 回包，提升网络抖动或多网卡环境下的重新连接稳定性。
-- 版本更新到 `0.3.6`。
+- Auto-pause KDEck receiver when Plasma desktop mode is detected, releasing the KDE Connect LAN discovery port to avoid interfering with the official desktop mode KDE Connect.
+- After leaving desktop mode, if the plugin is still in desired-receive state, the KDEck receiver automatically resumes.
+- Discovery startup broadcast changed to `0s, 1s, 2s, 5s, 10s, 15s`, with regular broadcast interval changed to 20 seconds.
+- Added short-term directional identity reply for recently discovered devices, improving reconnection stability under network jitter or multi-interface environments.
+- Version bumped to `0.3.6`.
 
 ## 0.3.5 - 2026-05-28
 
-- 为 Decky 插件商店准备源码结构：后端模块迁移到 `backend/src`，根目录保留 Decky Python 入口 `main.py`。
-- 发布打包脚本同步包含 `backend/src`，继续生成可手动导入的 `release/KDEck.zip`。
-- README 改为面向普通玩家的简版，减少内部实现和调试细节。
-- 版本更新到 `0.3.5`。
+- Prepared source structure for Decky plugin store: backend modules moved to `backend/src`, root retains Decky Python entry point `main.py`.
+- Release packaging script now includes `backend/src`, continuing to generate a manually importable `release/KDEck.zip`.
+- README simplified for general users, reducing internal implementation and debugging details.
+- Version bumped to `0.3.5`.
 
 ## 0.3.4 - 2026-05-28
 
-- 清理公开仓库中的实测私网 IP 示例，改为文档专用地址或文字占位，避免暴露本地网络信息。
-- 版本更新到 `0.3.4`。
+- Cleaned real private LAN IP examples from public repository, replacing with documentation-only addresses or textual placeholders to avoid exposing local network information.
+- Version bumped to `0.3.4`.
 
 ## 0.3.3 - 2026-05-28
 
-- 整理 GitHub / CNB 公开仓库元数据：补充 `repository`、`bugs`、`homepage`，更新 `plugin.json` 发布描述和图片地址。
-- 删除 Decky 模板遗留的 C 后端示例文件和 VS Code 部署脚本，避免公开仓库误导为同时包含 C 后端或旧模板部署流程。
-- README 新增源码仓库和发布包分发说明，明确 `release/` 与 `dist/` 不提交到源码仓库。
-- 版本更新到 `0.3.3`。
+- Organized GitHub / CNB public repository metadata: added `repository`, `bugs`, `homepage`. Updated `plugin.json` publish description and image URL.
+- Removed Decky template legacy C backend example files and VS Code deployment scripts to avoid misleading public repository visitors.
+- README added source repository and release package distribution notes, clarifying that `release/` and `dist/` are not committed to the source repository.
+- Version bumped to `0.3.3`.
 
 ## 0.3.2 - 2026-05-28
 
-- 根据 0.3.1 实机日志修正 Android 路径：手机 discovery、Deck 回包、Deck 主动 TCP 都正常，但 `tls_mode=client` 仍在 TLS 握手阶段超时。
-- Android 手机主动连接路径回到旧版更接近的 TLS server 模式，桌面 KDE Connect 保持同一 server 模式。
-- Android discovery 只回包到手机来包源端口，不再额外回 UDP `1716`；桌面端仍保留源端口 + `1716` 双回包。
-- 连接日志补充设备类型、协议版本、TLS 模式、TCP/TLS 阶段耗时、异常类型、identity 回包策略和 secure identity 内容，便于继续定位 Android 卡点。
-- 版本更新到 `0.3.2`。
+- Corrected Android path based on 0.3.1 hardware logs: phone discovery, Deck reply, and Deck active TCP all work, but `tls_mode=client` still times out during TLS handshake.
+- Android phone active connection path reverted to TLS server mode closer to the old version. Desktop KDE Connect keeps the same server mode.
+- Android discovery only replies to the phone's source port, no longer additionally replies to UDP `1716`. Desktop keeps source port + `1716` dual reply.
+- Connection logs now include device type, protocol version, TLS mode, TCP/TLS stage duration, exception type, identity reply strategy, and secure identity content for continued Android debugging.
+- Version bumped to `0.3.2`.
 
 ## 0.3.1 - 2026-05-28
 
-- 根据实机日志修正 Android 连接策略：0.3.0 能收到手机 discovery 并正确回包，但手机没有主动连入 Deck TCP 端口。
-- Android 手机路径恢复主动连接手机 `1716`，但 TLS 握手改用 client 模式；桌面 KDE Connect 保持原有 server 模式，避免影响已可用的电脑文件传输。
-- `peer_tls_handshake_start/done` 日志新增 `tls_mode`，用于区分 Android client 模式和桌面 server 模式。
-- 版本更新到 `0.3.1`。
+- Corrected Android connection strategy based on hardware logs: 0.3.0 could receive phone discovery and reply correctly, but the phone did not actively connect to the Deck TCP port.
+- Android phone path restored active connection to phone `1716`, but TLS handshake switched to client mode. Desktop KDE Connect keeps original server mode to avoid impacting already-working PC file transfer.
+- `peer_tls_handshake_start/done` logs now include `tls_mode` to distinguish between Android client mode and desktop server mode.
+- Version bumped to `0.3.1`.
 
 ## 0.3.0 - 2026-05-28
 
-- 接收端统一网络路径优先级：同 Wi-Fi / 有线局域网优先，其次 EasyTier、ZeroTier、Tailscale，最后普通 VPN / 其他接口，并过滤 `lo`、Docker、虚拟桥、代理保留网段等无效地址。
-- discovery 广播、identity 回包、主动 TCP 连接、前端 `Deck IP` 使用同一套路径选择逻辑，减少多网卡环境下选错源 IP。
-- Android 手机 discovery 后默认不再主动连接手机 `1716`，改为回发 identity 并等待手机连入 Deck TCP 端口；桌面 KDE Connect 仍保留主动连接路径。
-- discovery 日志新增路径类型，`peer_connect_skipped` 会记录 Android 兼容模式的跳过原因，方便继续实机判断连接是否进入 incoming TCP。
-- 版本更新到 `0.3.0`。
+- Unified network path priority for the receiver: same Wi-Fi / wired LAN first, then EasyTier, ZeroTier, Tailscale, finally regular VPN / other interfaces. Filtered out `lo`, Docker, virtual bridges, proxy reserved ranges, and other invalid addresses.
+- Discovery broadcast, identity reply, active TCP connection, and frontend `Deck IP` all use the same path selection logic, reducing source IP mis-selection in multi-interface environments.
+- Android phone discovery no longer triggers active connection to phone `1716` by default. Instead replies with identity and waits for the phone to connect to the Deck TCP port. Desktop KDE Connect keeps the active connection path.
+- Discovery logs now include path type. `peer_connect_skipped` records the skip reason for Android compatibility mode, making it easier to judge whether the connection entered incoming TCP.
+- Version bumped to `0.3.0`.
 
 ## 0.2.9 - 2026-05-28
 
-- 接收端向指定手机回发 identity 时优先选择同网段源 IP，例如 `192.0.2.144 -> 192.0.2.153`，避免多网卡环境下从 ZeroTier/EasyTier 等错误源地址回包。
-- `identity_reply_sent` 日志新增实际发送源 IP；主动 TCP 连接也会绑定同网段源 IP。
-- 接收端新增分阶段连接日志：incoming TCP、明文 identity、TLS handshake start/done、secure identity 收发，便于定位 Android KDE Connect 卡在哪一步。
-- 前端进一步压缩页面：标题显示版本号，移除底部版本区域，`Deck IP` 只显示地址，接收文件改为一行 `文件: KDEck.zip -> Downloads`。
+- When replying identity to a specific phone, the receiver now prefers a same-subnet source IP (e.g. `192.0.2.144 -> 192.0.2.153`), avoiding replies from wrong source addresses like ZeroTier/EasyTier in multi-interface environments.
+- `identity_reply_sent` log now includes the actual sent source IP. Active TCP connections also bind to the same-subnet source IP.
+- Receiver now has phased connection logs: incoming TCP, plaintext identity, TLS handshake start/done, secure identity send/receive, making it easier to identify where Android KDE Connect gets stuck.
+- Frontend further compressed: title shows version number, bottom version area removed, `Deck IP` shows only address, received file changed to single line `File: KDEck.zip -> Downloads`.
 
 ## 0.2.8 - 2026-05-28
 
-- 前端连接区改为统一行布局，修正 `设备` 行和 `Deck IP` 行在 Decky 面板里左侧不对齐的问题。
-- `接收目录` 从连接区移到新的 `接收文件` 模块，模块内新增 `最近文件`，稳定显示最近一次文件接收结果。
-- 文件接收提示改为基于后端 `last_file` 状态，不再依赖容易被 discovery 日志覆盖的最近事件列表。
-- discovery 收到手机 identity 后优先回发到来包源端口，同时保留 UDP 1716 兜底，提高 Android KDE Connect 发现和配对概率。
-- identity 包统一携带当前实际 TCP 端口，并对同一设备的主动 TCP 连接增加短时间冷却，减少重复 TLS 连接失败干扰。
-- 记录 0.2.8 实机问题：页面内容超出高度时触摸屏可滚动，但手柄按键无法继续翻到底部内容，后续需要调整 Decky 焦点导航和滚动布局。
+- Frontend connection area changed to unified row layout, fixing misalignment between `Device` row and `Deck IP` row in the Decky panel.
+- `Receive Directory` moved from connection area to new `Received Files` module with `Recent File`, stably showing the most recent file receive result.
+- File receive notification now based on backend `last_file` state, no longer relying on the recent event list that gets overwritten by discovery logs.
+- After receiving phone identity via discovery, reply is now preferentially sent to the source port, with UDP 1716 kept as fallback, improving Android KDE Connect discovery and pairing probability.
+- Identity packets now uniformly carry the current actual TCP port. Active TCP connections to the same device now have a short cooldown to reduce duplicate TLS connection failure interference.
+- Noted 0.2.8 hardware issue: content exceeding panel height is touch-scrollable but gamepad buttons cannot scroll to the bottom. Decky focus navigation and scroll layout needs future adjustment.
 
 ## 0.2.7 - 2026-05-28
 
-- 前端设备行改回 Decky `Field` 对齐方式，修正和 Deck IP、接收目录不对齐的问题。
-- 设备行只显示设备名，不再显示“待配对”等状态文案；状态灯紧跟设备名，绿色表示已连接，灰暗表示未连接或连接中。
-- 剪贴板输入框聚焦或点击时会尝试调用 Steam Deck 虚拟键盘接口，同时保留普通输入框 focus 行为。
-- 记录 Android KDE Connect 在当前非热点同网段下仍扫不到 KDEck，后续需要按网络路径和 receiver 日志继续定位。
+- Frontend device row reverted to Decky `Field` alignment, fixing misalignment with Deck IP and receive directory.
+- Device row now only shows device name, no longer showing status text like "waiting to pair". Status dot follows device name: green for connected, dimmed for disconnected or connecting.
+- Clipboard input field on focus or click attempts to invoke the Steam Deck virtual keyboard interface while keeping normal input focus behavior.
+- Noted that Android KDE Connect still cannot discover KDEck under current non-hotspot same-subnet conditions. Further debugging needed based on network path and receiver logs.
+
 ## 0.2.6 - 2026-05-28
 
-- 修复 0.2.4/0.2.5 配对回归：TLS 对端证书指纹缺失时不再拒绝 `kdeconnect.pair`，避免 KDE Connect 客户端卡在 `Pair requested`。
-- 配对信任策略改为优先使用证书指纹；拿不到指纹时记录 `device_id` 信任模式并写入事件日志。
-- 前端连接区精简：删除上方版本行，将状态和设备合并为 `设备` 一行，并增加绿/黄/灰状态灯。
-- 设备名显示增加截断，避免长设备名撑开 Decky 面板。
+- Fixed 0.2.4/0.2.5 pairing regression: `kdeconnect.pair` no longer rejected when TLS peer certificate fingerprint is missing, preventing KDE Connect clients from being stuck at `Pair requested`.
+- Pairing trust policy changed to prefer certificate fingerprint. When fingerprint is unavailable, records `device_id` trust mode and writes an event log.
+- Frontend connection area simplified: removed top version row, merged status and device into single `Device` row with green/yellow/gray status dot.
+- Device name display now truncated to prevent long device names from stretching the Decky panel.
+
 ## 0.2.5 - 2026-05-28
 
-- 项目更名：`DeckyLink` 统一改为 `KDEck`，包括插件显示名、KDE Connect 设备名、前端标题、README、第三方声明和发布包目录。
-- Python 后端文件更名为 `kdeck_backend.py` 和 `kdeck_kde_receiver.py`，打包脚本同步更新。
-- 发布包改为 `release/KDEck.zip`，zip 内顶层目录改为 `KDEck/`。
+- Project renamed: `DeckyLink` unified to `KDEck`, including plugin display name, KDE Connect device name, frontend title, README, third-party notices, and release package directory.
+- Python backend files renamed to `kdeck_backend.py` and `kdeck_kde_receiver.py`. Packaging script updated accordingly.
+- Release package changed to `release/KDEck.zip`, with zip internal top-level directory changed to `KDEck/`.
+
 ## 0.2.4 - 2026-05-27
 
-- 接收端配对后保存对端证书 SHA-256 指纹；剪贴板和文件接收必须匹配 `deviceId + 证书指纹`，未信任设备只允许发起配对。
-- 旧版无指纹配对记录不再显示为有效配对；从 0.2.3 或更早版本升级后需要重新配对 `KDEck`。
-- TCP 监听端口改为在 KDE Connect `1714-1764` 范围内自动选择空闲端口，identity、状态和日志均使用实际端口。
-- 接收端 `running` 状态改为基于 UDP/TCP 实际监听状态；停止时关闭 socket 并等待线程退出，减少重载或覆盖安装后的残留监听。
-- `stop_daemon()` 改为只停止 KDEck 记录并带有 `KDECK_MANAGED_DAEMON=1` 标记的进程，不再全局 `pkill kdeconnectd`。
-- 前端版本号除底部外同步显示在“连接”区，避免底部区域在 Decky 面板中不可见。
-- 新增 `packageManager: pnpm@9.15.9`，并补充 receiver 信任校验、动态端口、文件名清理和 daemon 停止保护测试。
+- Receiver saves peer certificate SHA-256 fingerprint after pairing. Clipboard and file receive now require matching `deviceId + certificate fingerprint`. Untrusted devices are only allowed to initiate pairing.
+- Old fingerprint-less pairing records no longer shown as valid pairings. Upgrading from 0.2.3 or earlier requires re-pairing with `KDEck`.
+- TCP listen port changed to auto-select an available port within the KDE Connect `1714-1764` range. Identity, status, and logs all use the actual port.
+- Receiver `running` status now based on actual UDP/TCP listen state. Stop closes sockets and waits for threads to exit, reducing residual listeners after reload or overwrite install.
+- `stop_daemon()` changed to only stop KDEck-recorded processes with the `KDECK_MANAGED_DAEMON=1` marker, no longer globally `pkill kdeconnectd`.
+- Frontend version number now shown in the "Connection" section in addition to the bottom area to avoid the bottom area being invisible in the Decky panel.
+- Added `packageManager: pnpm@9.15.9`. Added tests for receiver trust validation, dynamic port, filename sanitization, and daemon stop protection.
 
 ## 0.2.3 - 2026-05-27
 
-- 修正文件接收测试记录：新版本文件接收已复测可用，之前“手机无完成提示、Deck 未收到文件”来自老版本误测。
-- README 改为记录当前验证状态：剪贴板接收和手机发文件到 `/home/deck/Downloads` 均已验证可用。
+- Corrected file receive test record: new version file receive re-tested and confirmed working. Previous report of "phone shows no completion, Deck didn't receive file" was from old version mis-testing.
+- README updated to record current verification status: clipboard receive and phone file sending to `/home/deck/Downloads` both verified working.
 
 ## 0.2.2 - 2026-05-27
 
-- 记录过一条文件接收异常测试结果：手机 KDE Connect 向 `KDEck` 发送文件时没有完成提示，Deck 的 `/home/deck/Downloads` 未收到文件。
-- 该记录已在 0.2.3 更正：异常来自老版本误测，不代表新版本文件接收状态。
+- Recorded a file receive anomaly test result: phone KDE Connect sending a file to `KDEck` showed no completion prompt, and Deck's `/home/deck/Downloads` did not receive the file.
+- This record was corrected in 0.2.3: the anomaly was from an old version mis-test and does not represent the new version's file receive status.
 
 ## 0.2.1 - 2026-05-27
 
-- 增强 `KDEck` 隔离接收端的 LAN discovery：启动后按 `0 秒、2 秒、5 秒、10 秒` 密集广播，之后每 30 秒广播一次。
-- discovery 广播改为按本地 IPv4 网卡分别绑定源 IP 发送，目标覆盖 `255.255.255.255` 和每个网卡自己的 broadcast 地址。
-- 收到手机 `kdeconnect.identity` 后立即回发 `KDEck` identity；主动 TCP 连接手机失败时补发 UDP identity 作为回退。
-- 后端状态新增 UDP/TCP 监听状态、监听端口、当前 IP 列表、网卡列表、最近发现手机、最近 discovery 收发、最近连接失败、最近剪贴板长度和最近文件接收结果。
-- 接收端 JSONL 日志新增启停、证书、UDP/TCP bind、discovery、连接尝试、配对、剪贴板和文件接收事件。
-- 前端连接区新增 `手机名` 简化状态，底部新增 `KDEck v0.2.1` 版本号。
+- Enhanced `KDEck` isolated receiver LAN discovery: after startup, broadcasts at `0s, 2s, 5s, 10s` intensive intervals, then every 30 seconds.
+- Discovery broadcast changed to bind source IP per local IPv4 interface, targeting `255.255.255.255` and each interface's own broadcast address.
+- After receiving phone `kdeconnect.identity`, immediately replies with `KDEck` identity. Falls back to UDP identity reply when active TCP connection to phone fails.
+- Backend status now includes UDP/TCP listen state, listen port, current IP list, interface list, recently discovered phones, recent discovery send/receive, recent connection failures, recent clipboard length, and recent file receive results.
+- Receiver JSONL log now includes start/stop, certificate, UDP/TCP bind, discovery, connection attempt, pairing, clipboard, and file receive events.
+- Frontend connection area now shows `phone name` as simplified status. Bottom area now shows `KDEck v0.2.1` version number.
 
 ## 0.2.0 - 2026-05-27
 
-- 将连接状态改为单一摘要，直接显示设备名和可用状态，避免前端把后台和设备拆开造成误判。
-- 新增 Deck IP 展示，优先显示 EasyTier、ZeroTier、Tailscale、无线网接口，方便手机端手动添加设备。
-- 新增隔离的 `KDEck` KDE Connect 兼容接收端，使用独立设备 ID、证书和配置目录。
-- 手机 KDE Connect 可单独配对 `KDEck` 设备，后续“发送剪贴板”会写入 KDEck 文本框。
-- 新增手机 KDE Connect 文件接收，支持 `kdeconnect.share.request` payload 下载并保存到 `/home/deck/Downloads`。
-- 新增接收端事件日志，记录配对、剪贴板、文件接收成功和失败。
-- 剪贴板前端收敛为一行文本框和复制按钮，移除普通用户不需要的发送文本、发送文件和导出日志入口。
-- 优化前端剪贴板文本框：左对齐、普通字重、固定一行高度，并将按钮改为 `同步文本框`。
-- 新增 `get_connection_summary()`，一次返回状态、设备、Deck IP、接收目录和默认设备。
-- 新增 `start_managed_kde()`、`stop_managed_kde()`、`get_managed_kde_status()`、`get_deck_ips()`、`get_notebook()`、`save_notebook()`、`export_logs()` RPC。
-- 新增诊断日志导出 zip，包含 `kdeconnectd.log`、传输历史、记事本和插件管理的 daemon pid。
-- 新增插件卸载清理逻辑，只删除 KDEck 自己的设置、运行时和日志目录，不删除 KDE Connect 配对配置和接收文件。
-- 新增插件拉起 daemon 的 pid 记录，卸载时只尝试停止由 KDEck 拉起的 `kdeconnectd`。
-- 移除发布清单中的 `debug` 标记，保留 `_root` 用于必要时降权调用 `deck` 用户会话。
-- 新增发布打包脚本，生成可由 Decky Loader 插件导入入口直接导入的 `KDEck-0.2.0.zip`。
-- 发布包改用 Python `zipfile` 生成，强制 zip 内部路径使用 `/`，避免 Windows 反斜杠导致 SteamOS 侧识别失败。
-- 发布包文件名固定为 `KDEck.zip`，不再带版本号，便于 Decky Loader 手动覆盖安装。
+- Connection status changed to a single summary, directly showing device name and availability, avoiding frontend misjudgment from separating backend and device.
+- Added Deck IP display, prioritizing EasyTier, ZeroTier, Tailscale, and wireless interfaces, making it easier to manually add devices from the phone.
+- Added isolated `KDEck` KDE Connect-compatible receiver using independent device ID, certificate, and configuration directory.
+- Phone KDE Connect can separately pair with the `KDEck` device. Subsequent "send clipboard" writes to the KDEck text field.
+- Added phone KDE Connect file receive, supporting `kdeconnect.share.request` payload download and save to `/home/deck/Downloads`.
+- Added receiver event log recording pairing, clipboard, and file receive successes and failures.
+- Clipboard frontend simplified to a single-line text field and copy button. Removed send text, send file, and export log entries not needed by regular users.
+- Optimized clipboard text field: left-aligned, normal weight, fixed single-line height. Button changed to `Sync Text`.
+- Added `get_connection_summary()` returning status, device, Deck IP, receive directory, and default device in one call.
+- Added `start_managed_kde()`, `stop_managed_kde()`, `get_managed_kde_status()`, `get_deck_ips()`, `get_notebook()`, `save_notebook()`, `export_logs()` RPC methods.
+- Added diagnostic log export zip containing `kdeconnectd.log`, transfer history, notebook, and plugin-managed daemon pid.
+- Added plugin uninstall cleanup logic that only removes KDEck's own settings, runtime, and log directories, not KDE Connect pairing configuration or received files.
+- Added plugin-launched daemon pid recording. Uninstall only attempts to stop `kdeconnectd` instances launched by KDEck.
+- Removed `debug` flag from publish manifest. Kept `_root` for necessary privilege-dropped `deck` user session calls.
+- Added release packaging script generating `KDEck-0.2.0.zip` importable directly through Decky Loader plugin import.
+- Release package now uses Python `zipfile` to enforce `/` internal paths, avoiding Windows backslash issues on SteamOS.
+- Release package filename fixed to `KDEck.zip` without version number for easier Decky Loader manual overwrite install.
 
 ## 0.1.1 - 2026-05-27
 
-- 将模板调试前端改为简约 KDEck 操作面板。
-- 前端只保留启动/刷新、设备选择、剪贴板、文本和文件发送入口。
-- 移除前端 JSON 诊断输出，诊断细节由后端接口和日志负责。
-- 修正 `kdeconnect-cli` 仅返回 `paired` 时的设备可达性判断。
-- 修正后台拉起 `kdeconnectd` 后的 asyncio 清理警告。
-- 修正 Decky Python 沙箱中后端模块导入路径。
-- 兼容 Decky Loader 实机环境中的插件设置和运行时目录常量名。
-- 为游戏模式补齐 `QT_QPA_PLATFORM=wayland` 和 `WAYLAND_DISPLAY=gamescope-0`，避免 `kdeconnectd` 走 xcb 后 core dump。
-- 设备列表查询在 daemon 未就绪时不再调用 `kdeconnect-cli`，避免 DBus 自动激活用错误 Qt 平台反复拉起失败。
-- 将 `kdeconnectd` 启动改为 `setsid` 明确拉起并保留日志，等待 DBus 就绪时间从 5 秒提高到 15 秒。
-- KDE Connect 命令改用干净环境启动，避免继承 Decky/PyInstaller 的 `/tmp/_MEI...` 动态库路径导致 OpenSSL 版本冲突。
+- Changed template debug frontend to simplified KDEck operation panel.
+- Frontend only shows start/refresh, device selection, clipboard, text and file send entry points.
+- Removed frontend JSON diagnostic output. Diagnostic details handled by backend APIs and logs.
+- Fixed `kdeconnect-cli` device reachability judgment when only returning `paired`.
+- Fixed asyncio cleanup warnings after background launch of `kdeconnectd`.
+- Fixed backend module import path in Decky Python sandbox.
+- Compatible with Decky Loader hardware environment plugin settings and runtime directory constant names.
+- Added `QT_QPA_PLATFORM=wayland` and `WAYLAND_DISPLAY=gamescope-0` for game mode to prevent `kdeconnectd` from using xcb and core dumping.
+- Device list query no longer calls `kdeconnect-cli` when daemon is not ready, avoiding DBus auto-activation repeatedly launching with wrong Qt platform.
+- Changed `kdeconnectd` launch to explicit `setsid` with log retention. DBus readiness wait increased from 5 to 15 seconds.
+- KDE Connect commands now use clean environment to avoid inheriting Decky/PyInstaller's `/tmp/_MEI...` dynamic library path that causes OpenSSL version conflicts.
 
 ## 0.1.0 - 2026-05-27
 
-- 建立 KDEck 第一版 Python 后端。
-- 支持 KDE Connect 后台检测、启动、停止、重启和 DBus 就绪检查。
-- 支持设备刷新、设备列表、配对、取消配对。
-- 支持剪贴板发送、文本分享、Deck 当前剪贴板读写。
-- 支持单文件分享、常用目录浏览和最近发送记录。
-- 支持网络、DBus、KDE Connect 组件诊断。
-
-
-
-
+- First KDEck Python backend.
+- KDE Connect backend detection, start, stop, restart, and DBus readiness check.
+- Device refresh, device list, pairing, unpairing.
+- Clipboard send, text share, Deck current clipboard read/write.
+- Single file share, common directory browsing, and recent send history.
+- Network, DBus, and KDE Connect component diagnostics.
