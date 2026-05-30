@@ -1,1 +1,0 @@
-KDEck keeps this directory for Decky package compatibility.
