@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.5 - 2026-06-04
+
+- 蓝牙支持：RFCOMM 通道 22 + SDP 服务注册，PC/手机可通过蓝牙发现并连接。复用现有 TLS + 协议处理，蓝牙不可用时自动降级。
+- 发送文件：全屏独立页面（Decky routerHook），三标签切换截图/录像/日志，从 Decky 侧边栏进入。
+- 开发部署：`:kdeck update <url>` 隐藏命令下载安装 zip。`tools/deploy_to_deck.ps1` SSH 一键部署。
+- 构建：rollup 从 package.json 注入版本号。CI 自动构建并上传 artifact。
+- 假客户端：`recv-file` 命令反向测试文件传输。
+- i18n：6 个发送错误码中英文补全。
+- 代码清理：删除 115 行死代码。修复 React hooks 违规。移除不可用的 Steam 键盘 API。
+- 删除 `defaults/defaults.txt` 占位文件。
+- 版本更新到 0.5.5。
+
 ## 0.5.4 - 2026-05-30
 
 - 文件扫描器通用化：`list_sendable_files(category)` 支持截图、录像、日志三种类别，统一接口。
