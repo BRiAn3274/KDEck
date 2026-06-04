@@ -5,9 +5,10 @@ import {
 } from "@decky/ui";
 import { callable, toaster } from "@decky/api";
 import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import type { ApiResult, ConnectionSummary, SendableFile, SendableFileList } from "./types";
 import { text } from "./i18n";
-import { infoRowStyle, infoTextStyle, resultMessage } from "./utils";
+import { infoTextStyle, resultMessage } from "./utils";
 
 const listSendableFiles = callable<[category: string], SendableFileList>("list_sendable_files");
 const sendFileToPhone = callable<[file_path: string, device_id: string], ApiResult>("send_file_to_phone");
@@ -17,6 +18,40 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const tabBarStyle: CSSProperties = {
+  display: "flex",
+  gap: "2px",
+  borderRadius: "3px",
+  overflow: "hidden",
+};
+
+const tabStyle = (active: boolean): CSSProperties => ({
+  flex: 1,
+  textAlign: "center",
+  padding: "6px 0",
+  fontSize: "14px",
+  fontWeight: active ? 700 : 400,
+  background: active ? "var(--decky-accent, #1a9fff)" : "var(--decky-button, #3e4652)",
+  color: active ? "#fff" : "var(--decky-text, #969696)",
+  border: "none",
+  cursor: "pointer",
+  outline: "none",
+  transition: "background 0.15s",
+});
+
+const fileIcon = (ext: string): string => {
+  if (/\.(png|jpg|jpeg|webp|bmp)$/i.test(ext)) return "\u{1F5BC}";
+  if (/\.(mp4|mkv|webm|mov)$/i.test(ext)) return "\u{1F3AC}";
+  return "\u{1F4C4}";
+};
+
+function fileNameParts(full: string): { icon: string; stem: string; ext: string } {
+  const lastDot = full.lastIndexOf(".");
+  const stem = lastDot > 0 ? full.slice(0, lastDot) : full;
+  const ext = lastDot > 0 ? full.slice(lastDot) : "";
+  return { icon: fileIcon(ext), stem, ext };
 }
 
 export default function SendPage() {
@@ -69,16 +104,16 @@ export default function SendPage() {
       ) : (
         <>
           <PanelSectionRow>
-            <div style={{ display: "flex", gap: "6px", justifyContent: "center", padding: "6px 0" }}>
+            <div style={tabBarStyle}>
               {tabs.map((tab) => (
-                <ButtonItem
+                <button
                   key={tab.key}
-                  layout="below"
+                  style={tabStyle(category === tab.key)}
                   disabled={category === tab.key}
                   onClick={() => setCategory(tab.key)}
                 >
                   {tab.label}
-                </ButtonItem>
+                </button>
               ))}
             </div>
           </PanelSectionRow>
@@ -89,23 +124,25 @@ export default function SendPage() {
           ) : (
             files.map((file, idx) => {
               const oversize = maxFileSize > 0 && file.size > maxFileSize;
+              const { icon, stem, ext } = fileNameParts(file.name);
+              const isSending = sendingPath === file.path;
               return (
                 <PanelSectionRow key={idx}>
-                  <div style={{ ...infoRowStyle, justifyContent: "space-between", padding: "4px 0" }}>
-                    <span style={{ ...infoTextStyle, maxWidth: "60%", color: oversize ? "#e07070" : undefined }} title={file.name}>
-                      {file.name}
+                  <ButtonItem
+                    layout="below"
+                    disabled={sendingPath !== "" || oversize}
+                    onClick={() => handleSend(file)}
+                  >
+                    <span style={{ fontSize: "13px", opacity: oversize ? 0.55 : 1 }}>
+                      {icon}{"  "}
+                      <span style={{ fontWeight: 600 }}>{stem}</span>
+                      <span style={{ opacity: 0.45 }}>{ext}</span>
+                      <span style={{ margin: "0 10px", opacity: 0.35 }}>{"·"}</span>
+                      <span style={{ fontSize: "12px", opacity: 0.55 }}>{formatSize(file.size)}</span>
+                      {oversize && <span style={{ marginLeft: "8px", color: "#e07070", fontSize: "11px" }}>({text.oversize})</span>}
+                      {isSending && <span style={{ marginLeft: "8px", opacity: 0.55 }}>{text.sending}...</span>}
                     </span>
-                    <span style={{ fontSize: "12px", color: oversize ? "#e07070" : "#888", margin: "0 8px" }}>
-                      {formatSize(file.size)}
-                    </span>
-                    <ButtonItem
-                      layout="below"
-                      disabled={sendingPath !== "" || oversize}
-                      onClick={() => handleSend(file)}
-                    >
-                      {sendingPath === file.path ? text.sending : text.send}
-                    </ButtonItem>
-                  </div>
+                  </ButtonItem>
                 </PanelSectionRow>
               );
             })

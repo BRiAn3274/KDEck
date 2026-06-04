@@ -35,6 +35,8 @@ export const messages = {
     fileReceiveFailed: "文件接收失败",
     fileReceived: "已接收文件",
     unknownError: "未知错误",
+    oversize: "过大",
+    keyboardHint: "按 STEAM+X 打开键盘",
     errors: {
       unknown_hidden_command: "未知隐藏命令",
       clipboard_read_failed: "读取 Deck 当前剪贴板失败",
@@ -103,6 +105,8 @@ export const messages = {
     fileReceiveFailed: "File receive failed",
     fileReceived: "File received",
     unknownError: "Unknown error",
+    oversize: "Oversize",
+    keyboardHint: "Press STEAM+X for keyboard",
     errors: {
       unknown_hidden_command: "Unknown hidden command",
       clipboard_read_failed: "Failed to read the current Deck clipboard",

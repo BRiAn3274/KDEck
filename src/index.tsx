@@ -205,6 +205,9 @@ function Content() {
           />
         </PanelSectionRow>
         <PanelSectionRow>
+          <span style={{ fontSize: "11px", color: "#888", padding: "2px 10px", display: "block" }}>{text.keyboardHint}</span>
+        </PanelSectionRow>
+        <PanelSectionRow>
           <ButtonItem
             layout="below"
             disabled={busy || !clipboardText}
