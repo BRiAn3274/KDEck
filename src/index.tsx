@@ -48,13 +48,6 @@ function Content() {
 
   const toast = (body: string) => toaster.toast({ title: "KDEck", body });
 
-  const showKeyboard = (target: HTMLInputElement) => {
-    target.focus();
-    const rect = target.getBoundingClientRect();
-    window.SteamClient?.System?.ShowFloatingGamepadTextInput?.(0, rect.x, rect.y, rect.width, rect.height);
-    window.SteamClient?.System?.ShowVirtualKeyboard?.();
-  };
-
   const setText = (textStr: string) => {
     clipboardTextRef.current = textStr;
     setClipboardText(textStr);
@@ -204,11 +197,8 @@ function Content() {
               }
               saveNotebook(clipboardTextRef.current).catch(() => undefined);
             }}
-            onFocus={(event) => {
-              editingRef.current = true;
-              showKeyboard(event.currentTarget);
-            }}
-            onClick={(event) => showKeyboard(event.currentTarget)}
+            onFocus={() => { editingRef.current = true; }}
+            onClick={(event) => event.currentTarget.focus()}
             onChange={(event) => setText(event.currentTarget.value)}
             onKeyDown={handleClipboardEnter}
           />

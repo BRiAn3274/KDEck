@@ -1,22 +1,3 @@
-export type SteamClientLike = {
-  System?: {
-    ShowFloatingGamepadTextInput?: (
-      inputMode: number,
-      x: number,
-      y: number,
-      width: number,
-      height: number,
-    ) => void;
-    ShowVirtualKeyboard?: () => void;
-  };
-};
-
-declare global {
-  interface Window {
-    SteamClient?: SteamClientLike;
-  }
-}
-
 export type ApiResult = {
   ok?: boolean;
   message?: string;
