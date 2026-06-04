@@ -4,21 +4,20 @@ import {
   PanelSectionRow,
   staticClasses,
 } from "@decky/ui";
-import { callable, definePlugin, toaster } from "@decky/api";
+import { callable, definePlugin, routerHook, toaster } from "@decky/api";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { FaLink } from "react-icons/fa";
-import type { ApiResult, ConnectionSummary, ManagedEvent, ManagedFile, ManagedKde, Notebook, SendableFile, SendableFileList } from "./types";
+import type { ApiResult, ConnectionSummary, ManagedEvent, ManagedFile, ManagedKde, Notebook } from "./types";
 import { text } from "./i18n";
 import {
   deviceState,
   formatFileSummary,
   formatIp,
-  infoRowStyle,
-  infoTextStyle,
   inputStyle,
   resultMessage,
 } from "./utils";
 import { DeviceRow, TextRow } from "./components";
+import SendPage from "./send";
 
 declare var __KDECK_VERSION__: string;
 
@@ -31,25 +30,12 @@ const getNotebook = callable<[], Notebook>("get_notebook");
 const saveNotebook = callable<[text: string], Notebook>("save_notebook");
 const runHiddenCommand = callable<[command: string], ApiResult>("run_hidden_command");
 const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
-const listSendableFiles = callable<[category: string], SendableFileList>("list_sendable_files");
-const sendFileToPhone = callable<[file_path: string, device_id: string], ApiResult>("send_file_to_phone");
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function Content() {
   const [summary, setSummary] = useState<ConnectionSummary>({ connection: text.checking });
   const [clipboardText, setClipboardText] = useState("");
   const [busy, setBusy] = useState(false);
   const [task, setTask] = useState("");
-  const [view, setView] = useState<"main" | "send">("main");
-  const [category, setCategory] = useState<"screenshots" | "recordings" | "logs">("screenshots");
-  const [files, setFiles] = useState<SendableFile[]>([]);
-  const [sendingPath, setSendingPath] = useState("");
-
   const mountedRef = useRef(false);
   const busyRef = useRef(false);
   const editingRef = useRef(false);
@@ -191,93 +177,6 @@ function Content() {
   const device = deviceState(summary.managed_kde);
   const connection = task || managedStatus;
 
-  useEffect(() => {
-    if (view !== "send") return;
-    const load = () => {
-      listSendableFiles(category).then((result: SendableFileList) => {
-        if (mountedRef.current && result.ok && result.files) setFiles(result.files);
-      }).catch(() => undefined);
-    };
-    load();
-    const timer = window.setInterval(load, 5000);
-    return () => window.clearInterval(timer);
-  }, [view, category]);
-
-  const handleSend = async (file: SendableFile) => {
-    if (sendingPath) return;
-    setSendingPath(file.path);
-    const trustedKey = Object.keys(summary.managed_kde?.trusted_devices || {})[0] || "";
-    const result = await sendFileToPhone(file.path, trustedKey).catch(() => ({ ok: false }));
-    toast(result.ok ? text.fileSent : `${text.fileSendFailed}: ${resultMessage(result)}`);
-    setSendingPath("");
-  };
-
-  if (view === "send") {
-
-    const tabs: Array<{ key: typeof category; label: string }> = [
-      { key: "screenshots", label: text.tabScreenshots },
-      { key: "recordings", label: text.tabRecordings },
-      { key: "logs", label: text.tabLogs },
-    ];
-    const maxFileSize = category === "recordings" ? 500 * 1024 * 1024 : category === "logs" ? 50 * 1024 * 1024 : 0;
-
-    return (
-      <>
-        <PanelSection title={text.sendFile}>
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={() => setView("main")}>
-              {"< " + text.back}
-            </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <div style={{ display: "flex", gap: "6px", ...infoRowStyle, justifyContent: "center" }}>
-              {tabs.map((tab) => (
-                <ButtonItem
-                  key={tab.key}
-                  layout="below"
-                  disabled={category === tab.key}
-                  onClick={() => setCategory(tab.key)}
-                >
-                  {tab.label}
-                </ButtonItem>
-              ))}
-            </div>
-          </PanelSectionRow>
-          {files.length === 0 ? (
-            <PanelSectionRow>
-              <TextRow label={text.noFiles} />
-            </PanelSectionRow>
-          ) : (
-            files.map((file, idx) => {
-              const oversize = maxFileSize > 0 && file.size > maxFileSize;
-              return (
-                <PanelSectionRow key={idx}>
-                  <div style={{ ...infoRowStyle, justifyContent: "space-between" }}>
-                    <span style={{ ...infoTextStyle, maxWidth: "55%", color: oversize ? "#e07070" : undefined }} title={file.name}>
-                      {file.name}
-                    </span>
-                    <span style={{ fontSize: "12px", color: oversize ? "#e07070" : "#888" }}>
-                      {formatSize(file.size)}
-                    </span>
-                    <div style={{ marginLeft: "8px" }}>
-                      <ButtonItem
-                        layout="below"
-                        disabled={sendingPath !== "" || oversize}
-                        onClick={() => handleSend(file)}
-                      >
-                        {sendingPath === file.path ? text.sending : text.send}
-                      </ButtonItem>
-                    </div>
-                  </div>
-                </PanelSectionRow>
-              );
-            })
-          )}
-        </PanelSection>
-      </>
-    );
-  }
-
   return (
     <>
       <PanelSection title={text.connection}>
@@ -332,15 +231,12 @@ function Content() {
       </PanelSection>
       <PanelSection title={text.receiveFile}>
         <TextRow label={text.file} value={formatFileSummary(summary.managed_kde?.last_file, summary.incoming_directories?.items)} />
-        <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy} onClick={() => setView("send")}>
-            {text.sendFile}
-          </ButtonItem>
-        </PanelSectionRow>
       </PanelSection>
     </>
   );
 }
+
+routerHook.addRoute("/kdeck/send", () => <SendPage />);
 
 export default definePlugin(() => ({
   name: "KDEck",
