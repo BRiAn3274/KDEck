@@ -7,12 +7,17 @@ import decky
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(PLUGIN_DIR, "backend", "src"))
 
+import kdeck_config  # noqa: E402
 from kdeck_backend import KDEckBackend  # noqa: E402
 
 
 class Plugin:
     async def _main(self):
         self.loop = asyncio.get_event_loop()
+        # Initialize config with Decky environment
+        kdeck_config.init(
+            user_home=getattr(decky, "DECKY_USER_HOME", None),
+        )
         self.backend = KDEckBackend(
             logger=decky.logger,
             settings_dir=getattr(decky, "DECKY_PLUGIN_SETTINGS_DIR", None),
@@ -131,3 +136,9 @@ class Plugin:
 
     async def send_file_to_phone(self, file_path: str, device_id: str) -> dict:
         return self.backend.send_file_to_phone(file_path, device_id)
+
+    async def get_preferred_device(self) -> dict:
+        return self.backend.get_preferred_device()
+
+    async def set_preferred_device(self, device_id: str) -> dict:
+        return self.backend.set_preferred_device(device_id)
