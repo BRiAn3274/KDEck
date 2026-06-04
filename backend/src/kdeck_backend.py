@@ -5,8 +5,10 @@ import re
 import shutil
 import socket
 import subprocess
+import tempfile
 import threading
 import time
+import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -248,6 +250,7 @@ class KDEckBackend:
             ":kdeck logs": "Export redacted logs to Downloads.",
             ":kdeck export logs": "Export redacted logs to Downloads.",
             ":kdeck share logs": "Export logs and explain why direct reverse sending is not used.",
+            ":kdeck update <url>": "Download and install a new KDEck.zip from URL. Use for rapid development.",
         }
         if normalized == ":kdeck help":
             return {"ok": True, "message": "\n".join(f"{name} - {description}" for name, description in commands.items()), "commands": commands}
@@ -272,7 +275,61 @@ class KDEckBackend:
             result = self.kde_receiver.reannounce_trusted_devices("hidden_command")
             result["message"] = "Trusted-device reannounce sent." if result.get("ok") else "Receiver TCP listener is not ready."
             return result
+        if normalized.startswith(":kdeck update "):
+            url = command.strip()[len(":kdeck update "):].strip()
+            return self._update_from_url(url)
         return self._error("unknown_hidden_command", "Unknown hidden command.", command=command)
+
+    def _update_from_url(self, url: str) -> dict[str, Any]:
+        if not url.startswith(("http://", "https://")):
+            return self._error("invalid_update_url", "Only http/https URLs are allowed.")
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="kdeck-update-"))
+        zip_path = tmp_dir / "KDEck.zip"
+        try:
+            try:
+                with urllib.request.urlopen(url, timeout=30) as resp:
+                    zip_path.write_bytes(resp.read())
+            except Exception as exc:
+                return self._error("download_failed", f"Download failed: {exc}")
+
+            if not zipfile.is_zipfile(zip_path):
+                return self._error("invalid_zip", "Downloaded file is not a valid zip.")
+
+            with zipfile.ZipFile(zip_path) as archive:
+                names = archive.namelist()
+                expected = "KDEck/plugin.json" if any(n.startswith("KDEck/") for n in names) else "plugin.json"
+                if expected not in names:
+                    return self._error("invalid_zip", "Zip missing required files.")
+
+            plugin_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent
+            extract_dir = tmp_dir / "extracted"
+            script = tmp_dir / "install.sh"
+
+            with zipfile.ZipFile(zip_path) as archive:
+                archive.extractall(extract_dir)
+
+            kdeck_dir = extract_dir / "KDEck"
+            if not kdeck_dir.is_dir():
+                kdeck_dir = extract_dir
+
+            install_cmd = (
+                f"rm -rf '{plugin_dir}'.bak 2>/dev/null; "
+                f"mv '{plugin_dir}' '{plugin_dir}'.bak 2>/dev/null; "
+                f"rm -rf '{plugin_dir}'; "
+                f"cp -r '{kdeck_dir}' '{plugin_dir}'; "
+                f"rm -rf '{tmp_dir}'; "
+                f"sleep 1; "
+                f"sudo systemctl restart plugin_loader 2>/dev/null || true"
+            )
+            script.write_text(f"#!/usr/bin/env bash\nset -e\n{install_cmd}\n")
+            script.chmod(0o755)
+
+            subprocess.Popen(["nohup", "bash", str(script)], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            return {"ok": True, "message": "Update downloading and installing. Plugin will restart momentarily."}
+        except Exception as exc:
+            return self._error("update_failed", str(exc))
 
     def _ensure_mode_monitor(self) -> None:
         if self.mode_monitor_thread and self.mode_monitor_thread.is_alive():
