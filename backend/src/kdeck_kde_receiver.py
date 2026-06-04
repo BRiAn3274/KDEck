@@ -40,6 +40,12 @@ MIN_FREE_SPACE_BYTES = 64 * 1024 * 1024
 EVENT_LOG_MAX_BYTES = 2 * 1024 * 1024
 EVENT_LOG_BACKUPS = 3
 IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "mihomo", "clash")
+
+# Bluetooth constants: use numeric fallbacks since PyBluez (which monkey-patches
+# socket.AF_BLUETOOTH / BTPROTO_RFCOMM via import bluetooth) may not be
+# available in Deckys embedded Python.
+BT_AF = getattr(socket, "AF_BLUETOOTH", None) or 31
+BT_BTPROTO = getattr(socket, "BTPROTO_RFCOMM", None) or 3
 ANDROID_DEVICE_TYPES = {"phone", "tablet"}
 
 
@@ -116,6 +122,7 @@ class KDEckKdeReceiver:
         self.tcp_socket: Optional[socket.socket] = None
         self.udp_socket: Optional[socket.socket] = None
         self.bt_socket: Optional[socket.socket] = None
+        self._bt_helper_proc: Optional[subprocess.Popen] = None
         self.tcp_port: Optional[int] = None
         self.peer_connect_attempts: dict[str, float] = {}
         self.state_lock = threading.Lock()
@@ -189,6 +196,17 @@ class KDEckKdeReceiver:
                 pass
         self.tcp_socket = None
         self.udp_socket = None
+        if self._bt_helper_proc is not None:
+            try:
+                self._bt_helper_proc.terminate()
+                self._bt_helper_proc.wait(timeout=3)
+            except Exception:
+                pass
+            try:
+                self._bt_helper_proc.kill()
+            except Exception:
+                pass
+            self._bt_helper_proc = None
         self.bt_socket = None
         for thread in self.threads:
             if thread.is_alive():
@@ -282,38 +300,50 @@ class KDEckKdeReceiver:
 
     def _bluetooth_server(self) -> None:
         bt_channel = 22
-        try:
-            bt_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-            bt_sock.bind(("", bt_channel))
-            bt_sock.listen(1)
-            bt_sock.settimeout(3)
-            self.bt_socket = bt_sock
-        except (OSError, AttributeError) as exc:
+        helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kdeck_bt_helper.py")
+
+        if not os.path.exists(helper) or shutil.which("sdptool") is None:
+            self._write_event("bluetooth_init_failed", {"error": "helper missing or sdptool not installed"})
             self._set_diagnostic("bt_working", False)
-            self._set_diagnostic("bt_error", {"message": str(exc), "time": int(time.time())})
-            self._write_event("bluetooth_init_failed", {"error": str(exc)})
             return
-        # Register SDP service so KDE Connect can discover this RFCOMM channel.
-        try:
-            subprocess.run(
-                ["sdptool", "add", "--channel", str(bt_channel), "SP"],
-                capture_output=True, timeout=5,
-            )
-            self._write_event("bluetooth_sdp_registered", {"channel": bt_channel})
-        except (OSError, FileNotFoundError) as exc:
-            self._write_event("bluetooth_sdp_failed", {"channel": bt_channel, "error": str(exc)})
+
+        # The helper runs under system Python (which has PyBluez) and forwards
+        # Bluetooth RFCOMM connections to a local TCP port inside the Deck.
+        bt_tcp_port = self._bind_available_tcp_port(socket.socket(socket.AF_INET, socket.SOCK_STREAM), port_low=1730, port_mid=1740)
+
+        helper_proc = subprocess.Popen(
+            [sys.executable or "/usr/bin/python", helper, str(bt_tcp_port)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        self._bt_helper_proc = helper_proc
+
+        # Read one line to confirm startup.
+        line = helper_proc.stdout.readline() if helper_proc.stdout else ""
+        if "BT listening" not in line:
+            self._write_event("bluetooth_init_failed", {"error": f"helper startup failed: {line.strip()}"})
+            self._set_diagnostic("bt_working", False)
+            return
+
         self._set_diagnostic("bt_working", True)
         self._set_diagnostic("bt_error", None)
         self._write_event("bluetooth_listening", {"channel": bt_channel})
+
+        # Accept connections on the local TCP bridge port.
+        tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        tcp_server.bind(("127.0.0.1", bt_tcp_port))
+        tcp_server.listen(1)
+        tcp_server.settimeout(3)
+
         while not self.stop_event.is_set():
             try:
-                conn, addr = bt_sock.accept()
+                conn, addr = tcp_server.accept()
             except socket.timeout:
                 continue
             except OSError:
                 break
             self._start_connection_thread(
-                lambda c=conn, a=addr: self._handle_incoming_bt(c, a),
+                lambda c=conn, a=addr: self._handle_incoming_bt(c, str(addr)),
                 f"KDEckBtHandler-{addr}",
             )
 
@@ -1181,16 +1211,18 @@ class KDEckKdeReceiver:
         interfaces.sort(key=lambda item: (-int(item.get("priority") or 0), item.get("interface") or "", item.get("address") or ""))
         return interfaces
 
-    def _bind_available_tcp_port(self, server: socket.socket) -> int:
+    def _bind_available_tcp_port(self, server: socket.socket, port_low: int = None, port_mid: int = None) -> int:
+        lo = port_low if port_low is not None else TCP_PORT_MIN
+        hi = port_mid if port_mid is not None else TCP_PORT_MAX
         last_error: Optional[OSError] = None
-        for port in range(TCP_PORT_MIN, TCP_PORT_MAX + 1):
+        for port in range(lo, hi + 1):
             try:
                 server.bind(("0.0.0.0", port))
                 return port
             except OSError as exc:
                 last_error = exc
                 continue
-        raise OSError(f"no available TCP port in {TCP_PORT_MIN}-{TCP_PORT_MAX}: {last_error}")
+        raise OSError(f"no available TCP port in {lo}-{hi}: {last_error}")
 
     def _wait_for_listener_state(self, timeout: float) -> None:
         deadline = time.monotonic() + timeout

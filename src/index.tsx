@@ -198,7 +198,10 @@ function Content() {
               saveNotebook(clipboardTextRef.current).catch(() => undefined);
             }}
             onFocus={() => { editingRef.current = true; }}
-            onClick={(event) => event.currentTarget.focus()}
+            onClick={(event) => {
+              event.currentTarget.focus();
+              try { (window as any).SteamClient?.Input?.SetGamepadKeyboardText?.(true, clipboardTextRef.current); } catch (_) {}
+            }}
             onChange={(event) => setText(event.currentTarget.value)}
             onKeyDown={handleClipboardEnter}
           />
@@ -221,6 +224,13 @@ function Content() {
       </PanelSection>
       <PanelSection title={text.receiveFile}>
         <TextRow label={text.file} value={formatFileSummary(summary.managed_kde?.last_file, summary.incoming_directories?.items)} />
+      </PanelSection>
+      <PanelSection title={text.sendFile}>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => { window.location.hash = "/kdeck/send"; }}>
+            {text.sendFile}
+          </ButtonItem>
+        </PanelSectionRow>
       </PanelSection>
     </>
   );
