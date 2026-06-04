@@ -191,27 +191,28 @@ function Content() {
   const device = deviceState(summary.managed_kde);
   const connection = task || managedStatus;
 
-  if (view === "send") {
-    const loadFiles = () => {
+  useEffect(() => {
+    if (view !== "send") return;
+    const load = () => {
       listSendableFiles(category).then((result: SendableFileList) => {
         if (mountedRef.current && result.ok && result.files) setFiles(result.files);
       }).catch(() => undefined);
     };
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => window.clearInterval(timer);
+  }, [view, category]);
 
-    useEffect(() => {
-      loadFiles();
-      const timer = window.setInterval(loadFiles, 5000);
-      return () => window.clearInterval(timer);
-    }, [category]);
+  const handleSend = async (file: SendableFile) => {
+    if (sendingPath) return;
+    setSendingPath(file.path);
+    const trustedKey = Object.keys(summary.managed_kde?.trusted_devices || {})[0] || "";
+    const result = await sendFileToPhone(file.path, trustedKey).catch(() => ({ ok: false }));
+    toast(result.ok ? text.fileSent : `${text.fileSendFailed}: ${resultMessage(result)}`);
+    setSendingPath("");
+  };
 
-    const handleSend = async (file: SendableFile) => {
-      if (sendingPath) return;
-      setSendingPath(file.path);
-      const trustedKey = Object.keys(summary.managed_kde?.trusted_devices || {})[0] || "";
-      const result = await sendFileToPhone(file.path, trustedKey).catch(() => ({ ok: false }));
-      toast(result.ok ? text.fileSent : `${text.fileSendFailed}: ${resultMessage(result)}`);
-      setSendingPath("");
-    };
+  if (view === "send") {
 
     const tabs: Array<{ key: typeof category; label: string }> = [
       { key: "screenshots", label: text.tabScreenshots },
