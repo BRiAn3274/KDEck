@@ -77,13 +77,6 @@ export type Notebook = {
   };
 };
 
-export type PendingPair = {
-  device_id?: string;
-  device_name?: string;
-  host?: string;
-  time?: number;
-};
-
 export type ManagedKde = {
   ok?: boolean;
   running?: boolean;
@@ -97,7 +90,6 @@ export type ManagedKde = {
   trusted_devices?: Record<string, unknown>;
   last_events?: ManagedEvent[];
   last_file?: ManagedFile | null;
-  pending_pair?: PendingPair | null;
   error?: {
     code?: string;
     message?: string;

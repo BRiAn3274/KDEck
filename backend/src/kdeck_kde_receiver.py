@@ -143,8 +143,6 @@ class KDEckKdeReceiver:
             "interfaces": [],
             "discovered_devices": {},
         }
-        self.pending_pair_socket: Optional[ssl.SSLSocket] = None
-        self.pending_pair_lock = threading.Lock()
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.device_id = self._device_id()
 
@@ -198,7 +196,7 @@ class KDEckKdeReceiver:
             self.tcp_port = None
         self._set_diagnostic("udp_working", False)
         self._set_diagnostic("tcp_working", False)
-        self._clear_pending_pair()
+        self._set_diagnostic("pending_pair", None)
         self._flush_event_buffer()
         self._write_event("receiver_stopped", {})
         return {"ok": True, "running": False}
@@ -736,7 +734,7 @@ class KDEckKdeReceiver:
                 self._write_trusted_devices(trusted)
                 self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": False, "time": int(time.time())})
                 self._write_event("unpaired", {"device_id": peer_id})
-                self._clear_pending_pair()
+                self._set_diagnostic("pending_pair", None)
                 return
             if self._is_trusted_device(peer_id, fingerprint):
                 self._accept_pair_inner(tls, peer_id, peer_host, fingerprint)
@@ -787,51 +785,6 @@ class KDEckKdeReceiver:
                 "weak_trust_fallback": fingerprint is None,
             },
         )
-
-    def _clear_pending_pair(self) -> None:
-        with self.pending_pair_lock:
-            sock = self.pending_pair_socket
-            self.pending_pair_socket = None
-        self._set_diagnostic("pending_pair", None)
-        if sock:
-            try:
-                sock.close()
-            except OSError:
-                pass
-
-    def accept_pending_pair(self) -> dict[str, Any]:
-        with self.pending_pair_lock:
-            tls = self.pending_pair_socket
-            self.pending_pair_socket = None
-        pending = self.diagnostics.get("pending_pair")
-        self._set_diagnostic("pending_pair", None)
-        if not tls or not pending:
-            return {"ok": False, "error": {"code": "no_pending_pair", "message": "No pending pair request."}}
-        try:
-            peer_id = pending["device_id"]
-            peer_host = pending.get("host", "")
-            fingerprint = pending.get("fingerprint")
-            self._accept_pair_inner(tls, peer_id, peer_host, fingerprint)
-            return {"ok": True, "device_id": peer_id}
-        except (OSError, ssl.SSLError) as exc:
-            self._log("KDE receiver accept pending pair failed: %s", exc)
-            return {"ok": False, "error": {"code": "accept_pair_failed", "message": str(exc)}}
-
-    def reject_pending_pair(self) -> dict[str, Any]:
-        with self.pending_pair_lock:
-            tls = self.pending_pair_socket
-            self.pending_pair_socket = None
-        pending = self.diagnostics.get("pending_pair")
-        self._set_diagnostic("pending_pair", None)
-        if not tls or not pending:
-            return {"ok": False, "error": {"code": "no_pending_pair", "message": "No pending pair request."}}
-        try:
-            tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": False}}))
-            tls.close()
-        except (OSError, ssl.SSLError):
-            pass
-        self._write_event("pending_pair_rejected", {"device_id": pending.get("device_id")})
-        return {"ok": True}
 
     def _identity_packet(self, target_device_id: Optional[str] = None, target_protocol_version: Any = None) -> dict[str, Any]:
         body: dict[str, Any] = {

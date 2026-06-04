@@ -57,12 +57,6 @@ class Plugin:
     async def stop_managed_kde(self) -> dict:
         return self.backend.stop_managed_kde()
 
-    async def accept_pending_pair(self) -> dict:
-        return self.backend.accept_pending_pair()
-
-    async def reject_pending_pair(self) -> dict:
-        return self.backend.reject_pending_pair()
-
     async def get_managed_kde_status(self) -> dict:
         return self.backend.get_managed_kde_status()
 

@@ -176,12 +176,6 @@ class KDEckBackend:
         self.managed_kde_pause_reason = None
         return self.kde_receiver.stop()
 
-    def accept_pending_pair(self) -> dict[str, Any]:
-        return self.kde_receiver.accept_pending_pair()
-
-    def reject_pending_pair(self) -> dict[str, Any]:
-        return self.kde_receiver.reject_pending_pair()
-
     def get_managed_kde_status(self) -> dict[str, Any]:
         status = self.kde_receiver.status()
         desktop_mode = self._is_desktop_mode_active()

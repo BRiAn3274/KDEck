@@ -31,8 +31,6 @@ const getNotebook = callable<[], Notebook>("get_notebook");
 const saveNotebook = callable<[text: string], Notebook>("save_notebook");
 const runHiddenCommand = callable<[command: string], ApiResult>("run_hidden_command");
 const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
-const acceptPendingPair = callable<[], ApiResult>("accept_pending_pair");
-const rejectPendingPair = callable<[], ApiResult>("reject_pending_pair");
 const listSendableFiles = callable<[category: string], SendableFileList>("list_sendable_files");
 const sendFileToPhone = callable<[file_path: string, device_id: string], ApiResult>("send_file_to_phone");
 
@@ -185,7 +183,6 @@ function Content() {
   }, []);
 
   const receiverReady = summary.managed_kde?.running && summary.managed_kde?.udp_working && summary.managed_kde?.tcp_working;
-  const pendingPair = summary.managed_kde?.pending_pair;
   const managedStatus = summary.managed_kde?.paused
     ? text.desktopPaused
     : receiverReady
@@ -283,43 +280,12 @@ function Content() {
   return (
     <>
       <PanelSection title={text.connection}>
-        {pendingPair && receiverReady ? (
-          <>
-            <PanelSectionRow>
-              <DeviceRow
-                label={`${text.pairRequest}: ${shortDeviceName(pendingPair.device_name || pendingPair.device_id)}`}
-                connected={false}
-              />
-            </PanelSectionRow>
-            <PanelSectionRow>
-              <ButtonItem
-                layout="below"
-                disabled={busy}
-                onClick={() => run(text.acceptPair, async () => acceptPendingPair(), true)}
-              >
-                {text.acceptPair}
-              </ButtonItem>
-            </PanelSectionRow>
-            <PanelSectionRow>
-              <ButtonItem
-                layout="below"
-                disabled={busy}
-                onClick={() => run(text.rejectPair, async () => rejectPendingPair(), true)}
-              >
-                {text.rejectPair}
-              </ButtonItem>
-            </PanelSectionRow>
-          </>
-        ) : (
-          <>
-            <PanelSectionRow>
-              <ButtonItem layout="below" disabled={busy} onClick={() => run(text.refreshConnection, async () => startManagedKde(), true)}>
-                {busy ? connection : text.refreshConnection}
-              </ButtonItem>
-            </PanelSectionRow>
-            <DeviceRow label={receiverReady ? device.label : text.disconnected} connected={Boolean(receiverReady && device.connected)} />
-          </>
-        )}
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={busy} onClick={() => run(text.refreshConnection, async () => startManagedKde(), true)}>
+            {busy ? connection : text.refreshConnection}
+          </ButtonItem>
+        </PanelSectionRow>
+        <DeviceRow label={receiverReady ? device.label : text.disconnected} connected={Boolean(receiverReady && device.connected)} />
         <TextRow label="Deck IP" value={formatIp(summary.deck_ips?.primary)} />
       </PanelSection>
 
