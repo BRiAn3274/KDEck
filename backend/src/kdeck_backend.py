@@ -1195,79 +1195,71 @@ class KDEckBackend:
         if not steam_userdata.is_dir():
             return {"ok": True, "files": [], "message": "Steam userdata directory not found."}
         extensions = {".jpg", ".jpeg", ".png"}
-        files: list[dict[str, Any]] = []
-        for steam_id_dir in sorted(steam_userdata.iterdir()):
-            if not steam_id_dir.is_dir() or steam_id_dir.name == "0" or steam_id_dir.name == "anonymous":
-                continue
-            screenshots_root = steam_id_dir / "760" / "remote"
-            if not screenshots_root.is_dir():
-                continue
-            for app_id_dir in sorted(screenshots_root.iterdir()):
-                screenshot_dir = app_id_dir / "screenshots"
-                if not screenshot_dir.is_dir():
+        entries: list[tuple[int, int, Path, str]] = []
+        try:
+            for steam_id_dir in sorted(steam_userdata.iterdir()):
+                if not steam_id_dir.is_dir() or steam_id_dir.name in ("0", "anonymous"):
                     continue
-                for entry in sorted(screenshot_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-                    if not entry.is_file():
-                        continue
-                    if entry.suffix.lower() not in extensions:
+                remote_root = steam_id_dir / "760" / "remote"
+                if not remote_root.is_dir():
+                    continue
+                for app_id_dir in sorted(remote_root.iterdir()):
+                    screenshot_dir = app_id_dir / "screenshots"
+                    if not screenshot_dir.is_dir():
                         continue
                     try:
-                        st = entry.stat()
+                        for dir_entry in os.scandir(screenshot_dir):
+                            if not dir_entry.is_file(follow_symlinks=False):
+                                continue
+                            if not any(dir_entry.name.lower().endswith(ext) for ext in extensions):
+                                continue
+                            st = dir_entry.stat()
+                            entries.append((int(st.st_mtime), st.st_size, Path(dir_entry.path), app_id_dir.name))
                     except OSError:
                         continue
-                    files.append(self._file_entry(entry, st, app_id_dir.name))
-                    if len(files) >= limit:
-                        break
-                if len(files) >= limit:
-                    break
-            if len(files) >= limit:
-                break
-        return {"ok": True, "files": files}
+        except OSError:
+            pass
+        entries.sort(key=lambda x: x[0], reverse=True)
+        return {"ok": True, "files": [self._file_entry(p, self._stat_tuple(m, s), a) for m, s, p, a in entries[:limit]]}
 
     def _scan_recordings(self, limit: int) -> dict[str, Any]:
         extensions = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
-        files: list[dict[str, Any]] = []
+        entries: list[tuple[int, int, Path]] = []
         steam_userdata = Path("/home/deck/.local/share/Steam/userdata")
+        for root_dir in self._recording_roots(steam_userdata):
+            try:
+                for dir_entry in os.scandir(root_dir):
+                    if not dir_entry.is_file(follow_symlinks=False):
+                        continue
+                    if not any(dir_entry.name.lower().endswith(ext) for ext in extensions):
+                        continue
+                    st = dir_entry.stat()
+                    entries.append((int(st.st_mtime), st.st_size, Path(dir_entry.path)))
+            except OSError:
+                continue
+        entries.sort(key=lambda x: x[0], reverse=True)
+        return {"ok": True, "files": [self._file_entry(p, self._stat_tuple(m, s)) for m, s, p in entries[:limit]]}
+
+    def _recording_roots(self, steam_userdata: Path) -> list[Path]:
+        roots: list[Path] = []
+        videos = Path("/home/deck/Videos")
+        if videos.is_dir():
+            roots.append(videos)
         if steam_userdata.is_dir():
-            for steam_id_dir in sorted(steam_userdata.iterdir()):
-                if not steam_id_dir.is_dir() or steam_id_dir.name == "0" or steam_id_dir.name == "anonymous":
-                    continue
-                recordings_root = steam_id_dir / "gamerecordings"
-                if not recordings_root.is_dir():
-                    continue
-                for entry in sorted(recordings_root.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
-                    if not entry.is_file():
+            try:
+                for steam_id_dir in steam_userdata.iterdir():
+                    if not steam_id_dir.is_dir() or steam_id_dir.name in ("0", "anonymous"):
                         continue
-                    if entry.suffix.lower() not in extensions:
-                        continue
-                    try:
-                        st = entry.stat()
-                    except OSError:
-                        continue
-                    files.append(self._file_entry(entry, st))
-                    if len(files) >= limit:
-                        break
-                if len(files) >= limit:
-                    break
-        videos_dir = Path("/home/deck/Videos")
-        if videos_dir.is_dir():
-            for entry in sorted(videos_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-                if not entry.is_file():
-                    continue
-                if entry.suffix.lower() not in extensions:
-                    continue
-                try:
-                    st = entry.stat()
-                except OSError:
-                    continue
-                files.append(self._file_entry(entry, st))
-                if len(files) >= limit:
-                    break
-        return {"ok": True, "files": files}
+                    rec = steam_id_dir / "gamerecordings"
+                    if rec.is_dir():
+                        roots.append(rec)
+            except OSError:
+                pass
+        return roots
 
     def _scan_logs(self, limit: int) -> dict[str, Any]:
         extensions = {".log", ".jsonl", ".txt", ".old"}
-        files: list[dict[str, Any]] = []
+        entries: list[tuple[int, int, Path]] = []
         search_roots: list[Path] = []
         if self.log_dir:
             search_roots.append(self.log_dir)
@@ -1279,33 +1271,36 @@ class KDEckBackend:
         for root in search_roots:
             if not root.is_dir():
                 continue
-            for entry in sorted(root.rglob("*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True):
-                if not entry.is_file():
-                    continue
-                if entry.suffix.lower() not in extensions and entry.name.lower() != "kdeconnectd.log":
-                    continue
-                try:
-                    st = entry.stat()
-                except OSError:
-                    continue
-                files.append(self._file_entry(entry, st))
-                if len(files) >= limit:
-                    break
-            if len(files) >= limit:
-                break
-        return {"ok": True, "files": files}
+            try:
+                for dir_entry in os.scandir(root):
+                    if not dir_entry.is_file(follow_symlinks=False):
+                        continue
+                    if not (any(dir_entry.name.lower().endswith(ext) for ext in extensions) or dir_entry.name.lower() == "kdeconnectd.log"):
+                        continue
+                    st = dir_entry.stat()
+                    entries.append((int(st.st_mtime), st.st_size, Path(dir_entry.path)))
+            except OSError:
+                continue
+        entries.sort(key=lambda x: x[0], reverse=True)
+        return {"ok": True, "files": [self._file_entry(p, self._stat_tuple(m, s)) for m, s, p in entries[:limit]]}
 
     @staticmethod
     def _file_entry(entry: Path, st: Any, app_id: str = "") -> dict[str, Any]:
+        _size = getattr(st, "st_size", None) or getattr(st, "size", 0)
+        _mtime = getattr(st, "st_mtime", None) or getattr(st, "mtime", 0)
         result: dict[str, Any] = {
             "path": str(entry),
             "name": entry.name,
-            "size": st.st_size,
-            "mtime": int(st.st_mtime),
+            "size": _size,
+            "mtime": int(_mtime) if _mtime else 0,
         }
         if app_id:
             result["app_id"] = app_id
         return result
+
+    @staticmethod
+    def _stat_tuple(mtime: int, size: int) -> Any:
+        return type("_Stat", (), {"st_mtime": mtime, "st_size": size, "size": size, "mtime": mtime})()
 
     def send_file_to_phone(self, file_path: str, device_id: str) -> dict[str, Any]:
         return self.kde_receiver.send_share_request_to_peer(file_path, device_id)

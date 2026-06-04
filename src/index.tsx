@@ -202,7 +202,6 @@ function Content() {
     };
 
     useEffect(() => {
-      setFiles([]);
       loadFiles();
       const timer = window.setInterval(loadFiles, 5000);
       return () => window.clearInterval(timer);
@@ -222,7 +221,7 @@ function Content() {
       { key: "recordings", label: text.tabRecordings },
       { key: "logs", label: text.tabLogs },
     ];
-    const maxFileSize = category === "recordings" ? 500 * 1024 * 1024 : 0;
+    const maxFileSize = category === "recordings" ? 500 * 1024 * 1024 : category === "logs" ? 50 * 1024 * 1024 : 0;
 
     return (
       <>
