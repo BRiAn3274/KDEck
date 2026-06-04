@@ -281,9 +281,10 @@ class KDEckKdeReceiver:
         }
 
     def _bluetooth_server(self) -> None:
+        bt_channel = 22
         try:
             bt_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-            bt_sock.bind(("", 22))
+            bt_sock.bind(("", bt_channel))
             bt_sock.listen(1)
             bt_sock.settimeout(3)
             self.bt_socket = bt_sock
@@ -292,9 +293,18 @@ class KDEckKdeReceiver:
             self._set_diagnostic("bt_error", {"message": str(exc), "time": int(time.time())})
             self._write_event("bluetooth_init_failed", {"error": str(exc)})
             return
+        # Register SDP service so KDE Connect can discover this RFCOMM channel.
+        try:
+            subprocess.run(
+                ["sdptool", "add", "--channel", str(bt_channel), "SP"],
+                capture_output=True, timeout=5,
+            )
+            self._write_event("bluetooth_sdp_registered", {"channel": bt_channel})
+        except (OSError, FileNotFoundError) as exc:
+            self._write_event("bluetooth_sdp_failed", {"channel": bt_channel, "error": str(exc)})
         self._set_diagnostic("bt_working", True)
         self._set_diagnostic("bt_error", None)
-        self._write_event("bluetooth_listening", {"channel": 22})
+        self._write_event("bluetooth_listening", {"channel": bt_channel})
         while not self.stop_event.is_set():
             try:
                 conn, addr = bt_sock.accept()
