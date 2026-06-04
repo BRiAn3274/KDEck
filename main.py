@@ -132,8 +132,8 @@ class Plugin:
     async def run_hidden_command(self, command: str) -> dict:
         return self.backend.run_hidden_command(command)
 
-    async def list_steam_screenshots(self) -> dict:
-        return self.backend.list_steam_screenshots()
+    async def list_sendable_files(self, category: str = "screenshots") -> dict:
+        return self.backend.list_sendable_files(category)
 
     async def send_file_to_phone(self, file_path: str, device_id: str) -> dict:
         return self.backend.send_file_to_phone(file_path, device_id)

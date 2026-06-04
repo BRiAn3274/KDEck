@@ -7,7 +7,7 @@ import {
 import { callable, definePlugin, toaster } from "@decky/api";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { FaLink } from "react-icons/fa";
-import type { ApiResult, ConnectionSummary, ManagedEvent, ManagedFile, ManagedKde, Notebook, ScreenshotFile, ScreenshotList } from "./types";
+import type { ApiResult, ConnectionSummary, ManagedEvent, ManagedFile, ManagedKde, Notebook, SendableFile, SendableFileList } from "./types";
 import { text } from "./i18n";
 import {
   deviceState,
@@ -23,7 +23,7 @@ import { DeviceRow, TextRow } from "./components";
 
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.5.3";
+const APP_VERSION = "0.5.4";
 
 const getConnectionSummary = callable<[], ConnectionSummary>("get_connection_summary");
 const setClipboard = callable<[text: string], ApiResult>("set_clipboard");
@@ -33,7 +33,7 @@ const runHiddenCommand = callable<[command: string], ApiResult>("run_hidden_comm
 const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
 const acceptPendingPair = callable<[], ApiResult>("accept_pending_pair");
 const rejectPendingPair = callable<[], ApiResult>("reject_pending_pair");
-const listSteamScreenshots = callable<[], ScreenshotList>("list_steam_screenshots");
+const listSendableFiles = callable<[category: string], SendableFileList>("list_sendable_files");
 const sendFileToPhone = callable<[file_path: string, device_id: string], ApiResult>("send_file_to_phone");
 
 function formatSize(bytes: number): string {
@@ -48,7 +48,8 @@ function Content() {
   const [busy, setBusy] = useState(false);
   const [task, setTask] = useState("");
   const [view, setView] = useState<"main" | "send">("main");
-  const [screenshots, setScreenshots] = useState<ScreenshotFile[]>([]);
+  const [category, setCategory] = useState<"screenshots" | "recordings" | "logs">("screenshots");
+  const [files, setFiles] = useState<SendableFile[]>([]);
   const [sendingPath, setSendingPath] = useState("");
 
   const mountedRef = useRef(false);
@@ -195,12 +196,13 @@ function Content() {
 
   if (view === "send") {
     useEffect(() => {
-      listSteamScreenshots().then((result: ScreenshotList) => {
-        if (result.ok && result.files) setScreenshots(result.files);
+      setFiles([]);
+      listSendableFiles(category).then((result: SendableFileList) => {
+        if (result.ok && result.files) setFiles(result.files);
       }).catch(() => undefined);
-    }, []);
+    }, [category]);
 
-    const handleSend = async (file: ScreenshotFile) => {
+    const handleSend = async (file: SendableFile) => {
       if (sendingPath) return;
       setSendingPath(file.path);
       const trustedKey = Object.keys(summary.managed_kde?.trusted_devices || {})[0] || "";
@@ -209,40 +211,64 @@ function Content() {
       setSendingPath("");
     };
 
+    const tabs: Array<{ key: typeof category; label: string }> = [
+      { key: "screenshots", label: text.tabScreenshots },
+      { key: "recordings", label: text.tabRecordings },
+      { key: "logs", label: text.tabLogs },
+    ];
+    const maxFileSize = category === "recordings" ? 500 * 1024 * 1024 : 0;
+
     return (
       <>
-        <PanelSection title={text.steamScreenshots}>
+        <PanelSection title={text.sendFile}>
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={() => setView("main")}>
               {"< " + text.back}
             </ButtonItem>
           </PanelSectionRow>
-          {screenshots.length === 0 ? (
+          <PanelSectionRow>
+            <div style={{ display: "flex", gap: "6px", ...infoRowStyle, justifyContent: "center" }}>
+              {tabs.map((tab) => (
+                <ButtonItem
+                  key={tab.key}
+                  layout="below"
+                  disabled={category === tab.key}
+                  onClick={() => setCategory(tab.key)}
+                >
+                  {tab.label}
+                </ButtonItem>
+              ))}
+            </div>
+          </PanelSectionRow>
+          {files.length === 0 ? (
             <PanelSectionRow>
-              <TextRow label={text.noScreenshots} />
+              <TextRow label={text.noFiles} />
             </PanelSectionRow>
           ) : (
-            screenshots.map((file, idx) => (
-              <PanelSectionRow key={idx}>
-                <div style={{ ...infoRowStyle, justifyContent: "space-between" }}>
-                  <span style={{ ...infoTextStyle, maxWidth: "60%" }} title={file.name}>
-                    {file.name}
-                  </span>
-                  <span style={{ fontSize: "12px", color: "#888" }}>
-                    {formatSize(file.size)}
-                  </span>
-                  <div style={{ marginLeft: "8px" }}>
-                    <ButtonItem
-                      layout="below"
-                      disabled={sendingPath !== ""}
-                      onClick={() => handleSend(file)}
-                    >
-                      {sendingPath === file.path ? text.sending : text.send}
-                    </ButtonItem>
+            files.map((file, idx) => {
+              const oversize = maxFileSize > 0 && file.size > maxFileSize;
+              return (
+                <PanelSectionRow key={idx}>
+                  <div style={{ ...infoRowStyle, justifyContent: "space-between" }}>
+                    <span style={{ ...infoTextStyle, maxWidth: "55%", color: oversize ? "#e07070" : undefined }} title={file.name}>
+                      {file.name}
+                    </span>
+                    <span style={{ fontSize: "12px", color: oversize ? "#e07070" : "#888" }}>
+                      {formatSize(file.size)}
+                    </span>
+                    <div style={{ marginLeft: "8px" }}>
+                      <ButtonItem
+                        layout="below"
+                        disabled={sendingPath !== "" || oversize}
+                        onClick={() => handleSend(file)}
+                      >
+                        {sendingPath === file.path ? text.sending : text.send}
+                      </ButtonItem>
+                    </div>
                   </div>
-                </div>
-              </PanelSectionRow>
-            ))
+                </PanelSectionRow>
+              );
+            })
           )}
         </PanelSection>
       </>

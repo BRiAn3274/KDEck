@@ -126,16 +126,16 @@ export type ManagedFile = {
   time?: number;
 };
 
-export type ScreenshotFile = {
+export type SendableFile = {
   path: string;
   name: string;
   size: number;
   mtime: number;
-  app_id: string;
+  app_id?: string;
 };
 
-export type ScreenshotList = {
+export type SendableFileList = {
   ok?: boolean;
-  files?: ScreenshotFile[];
+  files?: SendableFile[];
   message?: string;
 };

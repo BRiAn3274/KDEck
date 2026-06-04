@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4 - 2026-05-30
+
+- Generalized file scanner: `list_sendable_files(category)` supports screenshots, recordings, and logs with a unified API.
+- Recordings tab: scans Steam gamerecordings and /home/deck/Videos for .mp4/.mkv/.webm/.mov files.
+- Logs tab: scans KDEck runtime/log dirs and Steam logs for .log/.jsonl/.txt/.old files.
+- Frontend: three-tab layout (Screenshots / Recordings / Logs) on the send page. Oversized recording files (500MB+) are flagged red and disabled.
+- LICENSE copyright updated to RainsListener 2026. plugin.json description updated to reflect send capability.
+- Version bumped to 0.5.4.
+
 ## 0.5.3 - 2026-05-30
 
 - Added send-file-to-phone feature: browse Steam screenshots from the Decky panel and send them to a paired phone via KDE Connect share.request.

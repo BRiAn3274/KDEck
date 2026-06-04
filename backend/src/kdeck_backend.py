@@ -1180,11 +1180,22 @@ class KDEckBackend:
             )
         return {"device_count": len(devices), "devices": devices}
 
-    def list_steam_screenshots(self) -> dict[str, Any]:
+    def list_sendable_files(self, category: str = "screenshots") -> dict[str, Any]:
+        limit = 50
+        if category == "screenshots":
+            return self._scan_screenshots(limit)
+        if category == "recordings":
+            return self._scan_recordings(limit)
+        if category == "logs":
+            return self._scan_logs(limit)
+        return {"ok": False, "error": {"code": "unknown_category", "message": f"Unknown category: {category}"}}
+
+    def _scan_screenshots(self, limit: int) -> dict[str, Any]:
         steam_userdata = Path("/home/deck/.local/share/Steam/userdata")
         if not steam_userdata.is_dir():
             return {"ok": True, "files": [], "message": "Steam userdata directory not found."}
-        files = []
+        extensions = {".jpg", ".jpeg", ".png"}
+        files: list[dict[str, Any]] = []
         for steam_id_dir in sorted(steam_userdata.iterdir()):
             if not steam_id_dir.is_dir() or steam_id_dir.name == "0" or steam_id_dir.name == "anonymous":
                 continue
@@ -1198,27 +1209,103 @@ class KDEckBackend:
                 for entry in sorted(screenshot_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
                     if not entry.is_file():
                         continue
-                    name_lower = entry.name.lower()
-                    if not (name_lower.endswith(".jpg") or name_lower.endswith(".jpeg") or name_lower.endswith(".png")):
+                    if entry.suffix.lower() not in extensions:
                         continue
                     try:
                         st = entry.stat()
                     except OSError:
                         continue
-                    files.append({
-                        "path": str(entry),
-                        "name": entry.name,
-                        "size": st.st_size,
-                        "mtime": int(st.st_mtime),
-                        "app_id": app_id_dir.name,
-                    })
-                    if len(files) >= 50:
+                    files.append(self._file_entry(entry, st, app_id_dir.name))
+                    if len(files) >= limit:
                         break
-                if len(files) >= 50:
+                if len(files) >= limit:
                     break
-            if len(files) >= 50:
+            if len(files) >= limit:
                 break
         return {"ok": True, "files": files}
+
+    def _scan_recordings(self, limit: int) -> dict[str, Any]:
+        extensions = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
+        files: list[dict[str, Any]] = []
+        steam_userdata = Path("/home/deck/.local/share/Steam/userdata")
+        if steam_userdata.is_dir():
+            for steam_id_dir in sorted(steam_userdata.iterdir()):
+                if not steam_id_dir.is_dir() or steam_id_dir.name == "0" or steam_id_dir.name == "anonymous":
+                    continue
+                recordings_root = steam_id_dir / "gamerecordings"
+                if not recordings_root.is_dir():
+                    continue
+                for entry in sorted(recordings_root.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
+                    if not entry.is_file():
+                        continue
+                    if entry.suffix.lower() not in extensions:
+                        continue
+                    try:
+                        st = entry.stat()
+                    except OSError:
+                        continue
+                    files.append(self._file_entry(entry, st))
+                    if len(files) >= limit:
+                        break
+                if len(files) >= limit:
+                    break
+        videos_dir = Path("/home/deck/Videos")
+        if videos_dir.is_dir():
+            for entry in sorted(videos_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if not entry.is_file():
+                    continue
+                if entry.suffix.lower() not in extensions:
+                    continue
+                try:
+                    st = entry.stat()
+                except OSError:
+                    continue
+                files.append(self._file_entry(entry, st))
+                if len(files) >= limit:
+                    break
+        return {"ok": True, "files": files}
+
+    def _scan_logs(self, limit: int) -> dict[str, Any]:
+        extensions = {".log", ".jsonl", ".txt", ".old"}
+        files: list[dict[str, Any]] = []
+        search_roots: list[Path] = []
+        if self.log_dir:
+            search_roots.append(self.log_dir)
+        if self.runtime_dir:
+            search_roots.append(self.runtime_dir)
+        steam_logs = Path("/home/deck/.local/share/Steam/logs")
+        if steam_logs.is_dir():
+            search_roots.append(steam_logs)
+        for root in search_roots:
+            if not root.is_dir():
+                continue
+            for entry in sorted(root.rglob("*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True):
+                if not entry.is_file():
+                    continue
+                if entry.suffix.lower() not in extensions and entry.name.lower() != "kdeconnectd.log":
+                    continue
+                try:
+                    st = entry.stat()
+                except OSError:
+                    continue
+                files.append(self._file_entry(entry, st))
+                if len(files) >= limit:
+                    break
+            if len(files) >= limit:
+                break
+        return {"ok": True, "files": files}
+
+    @staticmethod
+    def _file_entry(entry: Path, st: Any, app_id: str = "") -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "path": str(entry),
+            "name": entry.name,
+            "size": st.st_size,
+            "mtime": int(st.st_mtime),
+        }
+        if app_id:
+            result["app_id"] = app_id
+        return result
 
     def send_file_to_phone(self, file_path: str, device_id: str) -> dict[str, Any]:
         return self.kde_receiver.send_share_request_to_peer(file_path, device_id)

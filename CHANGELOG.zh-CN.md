@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4 - 2026-05-30
+
+- 文件扫描器通用化：`list_sendable_files(category)` 支持截图、录像、日志三种类别，统一接口。
+- 录像标签：扫描 Steam gamerecordings 和 /home/deck/Videos 中的 .mp4/.mkv/.webm/.mov 文件。
+- 日志标签：扫描 KDEck 运行时/日志目录和 Steam 日志中的 .log/.jsonl/.txt/.old 文件。
+- 前端：发送页面三标签布局（截图/录像/日志），超大录像文件（500MB+）标红禁用。
+- LICENSE 版权更新为 RainsListener 2026。plugin.json 描述更新为支持收发。
+- 版本更新到 0.5.4。
+
 ## 0.5.3 - 2026-05-30
 
 - 新增发送文件到手机功能：在 Decky 面板中浏览 Steam 截图，通过 KDE Connect share.request 发送到已配对手机。
