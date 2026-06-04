@@ -509,6 +509,7 @@ class KDEckBackend:
         self.mode_monitor_thread = None
 
     def _mode_monitor_loop(self) -> None:
+        daemon_failures = 0
         while not self.mode_monitor_stop.wait(5):
             if not self.managed_kde_desired:
                 continue
@@ -529,6 +530,22 @@ class KDEckBackend:
                 resumed = self.kde_receiver.start()
                 if resumed.get("running"):
                     self.kde_receiver.reannounce_trusted_devices("resume_from_desktop_mode")
+
+            # Daemon health watchdog: if the daemon was running and stops,
+            # attempt auto-restart with exponential backoff.
+            daemon_running = self.daemon._read_managed_daemon_pid() is not None
+            if not daemon_running and daemon_failures < 3:
+                daemon_failures += 1
+                if self.logger:
+                    self.logger.warning("KDEck daemon watchdog detected daemon down (failure %d/3)", daemon_failures)
+                # Fire-and-forget async restart from sync thread.
+                try:
+                    future = asyncio.run_coroutine_threadsafe(self.daemon.auto_restart_daemon(), self.loop)
+                    future.result(timeout=30)
+                except Exception:
+                    pass
+            elif daemon_running:
+                daemon_failures = 0
 
     def _is_desktop_mode_active(self) -> bool:
         pgrep = shutil.which("pgrep")

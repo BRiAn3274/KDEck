@@ -37,6 +37,9 @@ export const messages = {
     unknownError: "未知错误",
     oversize: "过大",
     keyboardHint: "按 STEAM+X 打开键盘",
+    btReady: "蓝牙可用",
+    btUnavailable: "蓝牙不可用",
+    btDisabled: "蓝牙未开启",
     errors: {
       unknown_hidden_command: "未知隐藏命令",
       clipboard_read_failed: "读取 Deck 当前剪贴板失败",
@@ -107,6 +110,9 @@ export const messages = {
     unknownError: "Unknown error",
     oversize: "Oversize",
     keyboardHint: "Press STEAM+X for keyboard",
+    btReady: "Bluetooth ready",
+    btUnavailable: "BT unavailable",
+    btDisabled: "BT disabled",
     errors: {
       unknown_hidden_command: "Unknown hidden command",
       clipboard_read_failed: "Failed to read the current Deck clipboard",

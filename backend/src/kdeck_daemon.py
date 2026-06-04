@@ -1,4 +1,4 @@
-"""KDEck daemon manager — lifecycle management for kdeconnectd."""
+"""KDEck daemon manager — lifecycle management for kdeconnectd with auto-restart."""
 
 import asyncio
 import json
@@ -11,6 +11,9 @@ from typing import Any, Optional
 
 import kdeck_config as config
 from kdeck_config import CommandResult
+
+MAX_RESTART_ATTEMPTS = 3
+RESTART_BACKOFF_BASE = 2  # seconds: 2, 4, 8
 
 
 class KDEckDaemon:
@@ -78,6 +81,8 @@ class KDEckDaemon:
             from kdeck_diagnostics import build_status
 
             return {"ok": True, "state": "already_running", "status": await build_status(self, self._run)}
+        # Clean up orphaned / zombie kdeconnectd processes from previous runs.
+        self._cleanup_zombie_daemons()
         daemon_path = shutil.which("kdeconnectd")
         if not daemon_path:
             return self._error("missing_daemon", "kdeconnectd not found.")
@@ -147,6 +152,39 @@ class KDEckDaemon:
             "environment": config.default_env(),
             "daemon_log_path": str(self.daemon_log_path),
         }
+
+    async def auto_restart_daemon(self) -> dict[str, Any]:
+        """Attempt to restart the daemon with exponential backoff. Returns on first success or after exhausting retries."""
+        for attempt in range(1, MAX_RESTART_ATTEMPTS + 1):
+            delay = RESTART_BACKOFF_BASE ** attempt
+            if self.logger:
+                self.logger.info("KDEck daemon auto-restart attempt %d/%d after %ds", attempt, MAX_RESTART_ATTEMPTS, delay)
+            await asyncio.sleep(delay)
+            start = await self.start_daemon()
+            if start.get("ok"):
+                ready = await self.ensure_daemon()
+                if ready.get("ok"):
+                    if self.logger:
+                        self.logger.info("KDEck daemon auto-restart succeeded on attempt %d", attempt)
+                    return {"ok": True, "attempt": attempt, "ready": ready}
+        if self.logger:
+            self.logger.warning("KDEck daemon auto-restart failed after %d attempts", MAX_RESTART_ATTEMPTS)
+        return {"ok": False, "attempts": MAX_RESTART_ATTEMPTS}
+
+    def _cleanup_zombie_daemons(self) -> None:
+        """Kill orphaned kdeconnectd processes from crashed/stale sessions."""
+        if not shutil.which("pkill"):
+            return
+        try:
+            result = subprocess.run(
+                ["pkill", "-u", config.deck_user(), "-x", "kdeconnectd"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False,
+            )
+            if result.returncode == 0 and self.logger:
+                self.logger.info("KDEck daemon cleaned up stale kdeconnectd processes")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     def _as_deck_user_command(self, command: list[str], extra_env: Optional[dict[str, str]] = None) -> list[str]:
         if hasattr(os, "geteuid") and os.geteuid() == 0 and shutil.which("runuser"):

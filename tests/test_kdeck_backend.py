@@ -8,7 +8,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend" / "src"))
 
-from kdeck_backend import CommandResult, KDEckBackend, parse_device_list
+from kdeck_backend import CommandResult, KDEckBackend
+from kdeck_diagnostics import parse_device_list
 
 
 class DeviceListParserTests(unittest.TestCase):
@@ -60,9 +61,9 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stop_managed_daemon_does_not_kill_unowned_pid(self):
         backend = self.make_backend()
-        backend.daemon_pid_path.write_text("12345", encoding="utf-8")
+        backend.daemon.daemon_pid_path.write_text("12345", encoding="utf-8")
 
-        with mock.patch.object(backend, "_is_managed_kdeconnectd_pid", return_value=False), mock.patch.object(
+        with mock.patch.object(backend.daemon, "_is_managed_kdeconnectd_pid", return_value=False), mock.patch.object(
             backend, "_run"
         ) as run:
             result = await backend.stop_managed_daemon()
@@ -70,15 +71,15 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["state"], "managed_daemon_not_owned")
         run.assert_not_called()
-        self.assertFalse(backend.daemon_pid_path.exists())
+        self.assertFalse(backend.daemon.daemon_pid_path.exists())
 
     async def test_stop_daemon_uses_managed_daemon_guard(self):
         backend = self.make_backend()
-        backend.daemon_pid_path.write_text("12345", encoding="utf-8")
+        backend.daemon.daemon_pid_path.write_text("12345", encoding="utf-8")
         command = CommandResult(command=["kill", "12345"], returncode=0, stdout="", stderr="")
 
-        with mock.patch.object(backend, "_is_managed_kdeconnectd_pid", return_value=True), mock.patch.object(
-            backend, "_run", return_value=command
+        with mock.patch.object(backend.daemon, "_is_managed_kdeconnectd_pid", return_value=True), mock.patch.object(
+            backend.daemon, "_run", return_value=command
         ) as run:
             result = await backend.stop_daemon()
 
@@ -172,7 +173,7 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_received_clipboard_is_saved_and_written_to_deck_clipboard(self):
         backend = self.make_backend()
 
-        with mock.patch.object(backend, "set_clipboard_sync", return_value={"ok": True, "length": 5}) as set_clipboard:
+        with mock.patch.object(backend.clipboard, "set_clipboard_sync", return_value={"ok": True, "length": 5}) as set_clipboard:
             backend._receive_managed_clipboard("hello", "phone")
 
         self.assertEqual(backend.get_notebook()["text"], "hello")
@@ -187,7 +188,7 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         (log_dir / "latest.log").write_text("decky log", encoding="utf-8")
         backend = KDEckBackend(settings_dir=str(root / "settings"), runtime_dir=str(root / "runtime"), log_dir=str(log_dir))
         backend.save_notebook("secret clipboard")
-        backend.history_path.write_text(
+        backend.file_manager._old_history_path.write_text(
             json.dumps([{"device_id": "phoneabcdef", "path": "/home/deck/Downloads/private.txt", "file_name": "private.txt"}]),
             encoding="utf-8",
         )
@@ -220,7 +221,7 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         downloads.mkdir()
         backend = KDEckBackend(settings_dir=str(root / "settings"), runtime_dir=str(root / "runtime"))
 
-        with mock.patch("kdeck_backend.COMMON_DIRECTORIES", (str(downloads),)):
+        with mock.patch("kdeck_config.common_directories", return_value=(str(downloads),)):
             result = backend.export_logs()
 
         self.assertTrue(result["ok"])

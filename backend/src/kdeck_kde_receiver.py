@@ -407,7 +407,8 @@ class KDEckKdeReceiver:
                 self.tcp_port = tcp_port
         except OSError as exc:
             self._log("KDE receiver TCP start failed: %s", exc)
-            error = {"message": str(exc), "time": int(time.time()), "port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}"}
+            hint = "KDE Connect 端口 {}-{} 全部被占用，请检查是否有其他 KDE Connect 实例在运行。".format(TCP_PORT_MIN, TCP_PORT_MAX)
+            error = {"message": str(exc), "time": int(time.time()), "port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}", "hint": hint}
             self._set_diagnostic("tcp_working", False)
             self._set_diagnostic("tcp_error", error)
             self._set_diagnostic("last_error", {"stage": "tcp_bind", **error})

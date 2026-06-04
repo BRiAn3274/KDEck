@@ -64,6 +64,11 @@ export type ManagedKde = {
   device_name?: string;
   udp_working?: boolean;
   tcp_working?: boolean;
+  bt_working?: boolean;
+  bt_error?: {
+    message?: string;
+    time?: number;
+  } | null;
   paired?: boolean;
   paused?: boolean;
   pause_reason?: string | null;

@@ -70,6 +70,9 @@ export default function MainPanel() {
       : text.receiverStarting;
   const device = deviceState(summary.managed_kde);
   const connection = task || managedStatus;
+  const btStatus = summary.managed_kde?.bt_working ? text.btReady
+    : summary.managed_kde?.bt_error ? text.btUnavailable
+    : text.btDisabled;
 
   return (
     <>
@@ -81,6 +84,7 @@ export default function MainPanel() {
         </PanelSectionRow>
         <DeviceRow label={receiverReady ? device.label : text.disconnected} connected={Boolean(receiverReady && device.connected)} />
         <TextRow label="Deck IP" value={formatIp(summary.deck_ips?.primary)} />
+        <TextRow label="Bluetooth" value={btStatus} />
       </PanelSection>
 
       <PanelSection title={text.clipboard}>
