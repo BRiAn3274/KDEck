@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3 - 2026-05-30
+
+- Added send-file-to-phone feature: browse Steam screenshots from the Decky panel and send them to a paired phone via KDE Connect share.request.
+- Backend: `list_steam_screenshots()` scans `/home/deck/.local/share/Steam/userdata` for screenshot files.
+- Backend: `send_file_to_phone()` connects to a trusted phone over TLS and sends a share.request with a temporary TLS file server for the phone to download.
+- Frontend: dual-view layout with a "Send File" button that switches to a screenshot browser page. Back button returns to the main panel.
+- Removed placeholder `defaults/defaults.txt` per Decky Plugin Store review requirements.
+- Version bumped to `0.5.3`.
+
 ## 0.5.2 - 2026-05-30
 
 - Frontend version fix: `APP_VERSION` now matches `package.json` at 0.5.2.

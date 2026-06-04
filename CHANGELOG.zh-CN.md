@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3 - 2026-05-30
+
+- 新增发送文件到手机功能：在 Decky 面板中浏览 Steam 截图，通过 KDE Connect share.request 发送到已配对手机。
+- 后端：`list_steam_screenshots()` 扫描 `/home/deck/.local/share/Steam/userdata` 下的截图文件。
+- 后端：`send_file_to_phone()` 通过 TLS 连接手机，发送 share.request 并开启临时 TLS 文件端口供手机下载。
+- 前端：双视图布局，"发送文件"按钮切换到截图浏览页面，返回按钮回到主面板。
+- 移除占位文件 `defaults/defaults.txt`，符合 Decky 插件商店审核要求。
+- 版本更新到 `0.5.3`。
+
 ## 0.5.2 - 2026-05-30
 
 - 前端版本号修正：`APP_VERSION` 与 `package.json` 同步为 0.5.2。

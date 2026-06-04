@@ -125,3 +125,17 @@ export type ManagedFile = {
   size?: number;
   time?: number;
 };
+
+export type ScreenshotFile = {
+  path: string;
+  name: string;
+  size: number;
+  mtime: number;
+  app_id: string;
+};
+
+export type ScreenshotList = {
+  ok?: boolean;
+  files?: ScreenshotFile[];
+  message?: string;
+};

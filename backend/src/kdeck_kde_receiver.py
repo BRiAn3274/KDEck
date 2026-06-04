@@ -1483,6 +1483,134 @@ class KDEckKdeReceiver:
                     continue
         return events[-limit:]
 
+    def send_share_request_to_peer(self, file_path: str, device_id: str) -> dict[str, Any]:
+        trusted = self._trusted_devices().get(device_id)
+        if not trusted:
+            return {"ok": False, "error": {"code": "not_trusted", "message": "Device is not trusted."}}
+        host = trusted.get("last_host")
+        if not host:
+            return {"ok": False, "error": {"code": "unknown_host", "message": "No known host for this device."}}
+        source = Path(file_path)
+        if not source.is_file():
+            return {"ok": False, "error": {"code": "file_not_found", "message": "File not found."}}
+        file_size = source.stat().st_size
+        if file_size == 0:
+            return {"ok": False, "error": {"code": "empty_file", "message": "File is empty."}}
+        if file_size > MAX_FILE_BYTES:
+            return {"ok": False, "error": {"code": "file_too_large", "message": f"File exceeds {MAX_FILE_BYTES} bytes."}}
+
+        stop_event = threading.Event()
+        file_port, server_thread = self._serve_file_tls(source, stop_event)
+        if file_port is None:
+            return {"ok": False, "error": {"code": "file_server_failed", "message": "Could not start file server."}}
+
+        self._write_event("share_send_attempt", {"device_id": device_id, "host": host, "file": source.name, "size": file_size, "port": file_port})
+
+        try:
+            interfaces = self._network_interfaces()
+            source_ips = self._source_ips_for_host(host, interfaces)
+            source_ip = source_ips[0] if source_ips else None
+            raw = socket.create_connection((host, 1716), timeout=5, source_address=(source_ip, 0) if source_ip else None)
+        except OSError:
+            self._cleanup_file_server(stop_event, server_thread)
+            return {"ok": False, "error": {"code": "peer_unreachable", "message": "Could not connect to phone."}}
+
+        try:
+            hello = self._identity_packet()
+            raw.sendall(self._encode_packet(hello))
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            context.load_cert_chain(str(self.cert_path), str(self.key_path))
+            tls = context.wrap_socket(raw, server_hostname=device_id, server_side=False, do_handshake_on_connect=True)
+
+            share = {
+                "type": PACKET_SHARE_REQUEST,
+                "body": {
+                    "filename": source.name,
+                    "payloadSize": file_size,
+                    "numberOfFiles": 1,
+                },
+                "payloadTransferInfo": {"port": file_port},
+            }
+            tls.sendall(self._encode_packet(share))
+            self._write_event("share_send_sent", {"device_id": device_id, "file": source.name, "size": file_size, "port": file_port})
+            self._set_diagnostic("last_share_send", {"device_id": device_id, "file": source.name, "size": file_size, "time": int(time.time())})
+
+            server_thread.join(timeout=60)
+            if server_thread.is_alive():
+                self._cleanup_file_server(stop_event, server_thread)
+                return {"ok": False, "error": {"code": "transfer_timeout", "message": "File transfer timed out."}}
+
+            return {"ok": True, "file": source.name, "size": file_size}
+        except Exception as exc:
+            self._cleanup_file_server(stop_event, server_thread)
+            return {"ok": False, "error": {"code": "send_failed", "message": str(exc)}}
+        finally:
+            try:
+                tls.close()
+            except Exception:
+                pass
+
+    def _serve_file_tls(self, file_path: Path, stop_event: threading.Event) -> tuple[Optional[int], threading.Thread]:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", 0))
+        except OSError:
+            return None, threading.Thread()
+        port = sock.getsockname()[1]
+        sock.listen(1)
+        sock.settimeout(5)
+
+        def _serve() -> None:
+            data = b""
+            try:
+                data = file_path.read_bytes()
+            except OSError:
+                pass
+            if not data:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+                return
+            try:
+                conn, _ = sock.accept()
+            except (OSError, socket.timeout):
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+                return
+            try:
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                context.verify_mode = ssl.CERT_NONE
+                context.load_cert_chain(str(self.cert_path), str(self.key_path))
+                tls_sock = context.wrap_socket(conn, server_side=True, do_handshake_on_connect=True)
+                tls_sock.settimeout(30)
+                tls_sock.sendall(data)
+                try:
+                    tls_sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                tls_sock.close()
+            except OSError:
+                pass
+            finally:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+        thread = threading.Thread(target=_serve, daemon=True)
+        thread.start()
+        return port, thread
+
+    def _cleanup_file_server(self, stop_event: threading.Event, thread: threading.Thread) -> None:
+        stop_event.set()
+        thread.join(timeout=2)
+
     def _log(self, message: str, *args: Any) -> None:
         if self.logger:
             self.logger.info(message, *args)

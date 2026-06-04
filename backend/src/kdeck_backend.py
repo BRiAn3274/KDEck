@@ -1180,6 +1180,49 @@ class KDEckBackend:
             )
         return {"device_count": len(devices), "devices": devices}
 
+    def list_steam_screenshots(self) -> dict[str, Any]:
+        steam_userdata = Path("/home/deck/.local/share/Steam/userdata")
+        if not steam_userdata.is_dir():
+            return {"ok": True, "files": [], "message": "Steam userdata directory not found."}
+        files = []
+        for steam_id_dir in sorted(steam_userdata.iterdir()):
+            if not steam_id_dir.is_dir() or steam_id_dir.name == "0" or steam_id_dir.name == "anonymous":
+                continue
+            screenshots_root = steam_id_dir / "760" / "remote"
+            if not screenshots_root.is_dir():
+                continue
+            for app_id_dir in sorted(screenshots_root.iterdir()):
+                screenshot_dir = app_id_dir / "screenshots"
+                if not screenshot_dir.is_dir():
+                    continue
+                for entry in sorted(screenshot_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                    if not entry.is_file():
+                        continue
+                    name_lower = entry.name.lower()
+                    if not (name_lower.endswith(".jpg") or name_lower.endswith(".jpeg") or name_lower.endswith(".png")):
+                        continue
+                    try:
+                        st = entry.stat()
+                    except OSError:
+                        continue
+                    files.append({
+                        "path": str(entry),
+                        "name": entry.name,
+                        "size": st.st_size,
+                        "mtime": int(st.st_mtime),
+                        "app_id": app_id_dir.name,
+                    })
+                    if len(files) >= 50:
+                        break
+                if len(files) >= 50:
+                    break
+            if len(files) >= 50:
+                break
+        return {"ok": True, "files": files}
+
+    def send_file_to_phone(self, file_path: str, device_id: str) -> dict[str, Any]:
+        return self.kde_receiver.send_share_request_to_peer(file_path, device_id)
+
     def _error(self, code: str, message: str, **details: Any) -> dict[str, Any]:
         if self.logger:
             self.logger.warning("%s: %s", code, message)
