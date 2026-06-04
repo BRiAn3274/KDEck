@@ -195,11 +195,17 @@ function Content() {
   const connection = task || managedStatus;
 
   if (view === "send") {
+    const loadFiles = () => {
+      listSendableFiles(category).then((result: SendableFileList) => {
+        if (mountedRef.current && result.ok && result.files) setFiles(result.files);
+      }).catch(() => undefined);
+    };
+
     useEffect(() => {
       setFiles([]);
-      listSendableFiles(category).then((result: SendableFileList) => {
-        if (result.ok && result.files) setFiles(result.files);
-      }).catch(() => undefined);
+      loadFiles();
+      const timer = window.setInterval(loadFiles, 5000);
+      return () => window.clearInterval(timer);
     }, [category]);
 
     const handleSend = async (file: SendableFile) => {
