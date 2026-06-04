@@ -408,6 +408,75 @@ def send_file(args: argparse.Namespace, context: ClientContext) -> dict[str, Any
     return {"ok": True, "host": session.host, "port": session.port, "file": file_path.name, "size": len(data)}
 
 
+def recv_file(args: argparse.Namespace, context: ClientContext) -> dict[str, Any]:
+    listen_port = args.port or 1716
+    host = args.host or "0.0.0.0"
+    out_dir = Path(args.out or context.state_dir / "received")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Listening on {host}:{listen_port} for KDEck share.request...")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((host, listen_port))
+        server.listen(1)
+        server.settimeout(args.timeout)
+
+        try:
+            raw, addr = server.accept()
+        except socket.timeout:
+            raise ClientError(f"No KDEck connection received within {args.timeout}s. Trigger a send from the Deck UI.")
+        print(f"KDEck connected from {addr}")
+
+        with raw:
+            try:
+                identity = read_packet(raw, args.timeout)
+            except ClientError:
+                raise ClientError("Did not receive identity packet from KDEck.")
+            if identity.get("type") != "kdeconnect.identity":
+                raise ClientError(f"Expected identity, got: {identity.get('type')}")
+
+            tls = context.server_ssl_context().wrap_socket(raw, server_side=True, do_handshake_on_connect=True)
+            with tls:
+                tls.settimeout(args.timeout)
+                secure_identity = read_packet(tls, args.timeout)
+                if secure_identity.get("type") != "kdeconnect.identity":
+                    raise ClientError(f"Expected secure identity, got: {secure_identity.get('type')}")
+                tls.sendall(encode_packet(packet("kdeconnect.identity", identity_body(context.device_id, context.device_name or "FakeClient"))))
+
+                share = read_packet(tls, args.timeout)
+                if share.get("type") != "kdeconnect.share.request":
+                    raise ClientError(f"Expected share.request, got: {share.get('type')}")
+                body = share.get("body") or {}
+                transfer_info = share.get("payloadTransferInfo") or {}
+                filename = body.get("filename") or "received-file"
+                payload_size = int(share.get("payloadSize") or 0)
+                payload_port = int(transfer_info.get("port") or 0)
+                if not payload_port or not payload_size:
+                    raise ClientError(f"Invalid share.request: port={payload_port}, size={payload_size}")
+
+                print(f"Receiving {filename} ({payload_size} bytes) from port {payload_port}...")
+
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                ctx.load_cert_chain(str(context.cert), str(context.key))
+                with socket.create_connection((addr[0], payload_port), timeout=args.timeout) as dl_raw:
+                    with ctx.wrap_socket(dl_raw, server_hostname=body.get("deviceId")) as dl_tls:
+                        dl_tls.settimeout(args.timeout)
+                        written = 0
+                        dest = out_dir / filename
+                        with dest.open("wb") as output:
+                            while written < payload_size:
+                                chunk = dl_tls.recv(min(65536, payload_size - written))
+                                if not chunk:
+                                    break
+                                output.write(chunk)
+                                written += len(chunk)
+
+                print(f"Saved to {dest} ({written} bytes)")
+                return {"ok": True, "host": addr[0], "file": str(dest), "size": written}
+
 def send_bad_packet(args: argparse.Namespace, context: ClientContext) -> dict[str, Any]:
     with SecureSession(args, context) as session:
         if args.kind == "invalid-json":
@@ -462,6 +531,12 @@ def build_parser() -> argparse.ArgumentParser:
     file_parser.add_argument("--file", required=True, help="要发送到 Deck Downloads 的文件")
     file_parser.add_argument("--pair", action="store_true", help="发送文件前先在同一 TLS 会话里配对")
 
+    recv_parser = subparsers.add_parser("recv-file", help="等待 KDEck 发来 share.request 并下载文件")
+    recv_parser.add_argument("--host", default="0.0.0.0", help="监听的 IP，默认 0.0.0.0")
+    recv_parser.add_argument("--port", type=int, default=1716, help="监听的 TCP 端口，默认 1716")
+    recv_parser.add_argument("--out", help="下载目录，默认 state-dir/received/")
+    recv_parser.add_argument("--timeout", type=float, default=60.0, help="等待连接的超时时间，默认 60 秒")
+
     bad_parser = subparsers.add_parser("bad-packet", help="发送异常 packet，用于验证 KDEck 拒绝路径")
     add_target(bad_parser)
     bad_parser.add_argument("kind", choices=["invalid-json", "bad-body", "oversized"], help="异常 packet 类型")
@@ -484,6 +559,8 @@ def main(argv: list[str] | None = None) -> int:
             result = send_clipboard(args, context)
         elif args.command == "send-file":
             result = send_file(args, context)
+        elif args.command == "recv-file":
+            result = recv_file(args, context)
         elif args.command == "bad-packet":
             result = send_bad_packet(args, context)
         else:
