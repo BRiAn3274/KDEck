@@ -309,12 +309,24 @@ class KDEckKdeReceiver:
 
         # The helper runs under system Python (which has PyBluez) and forwards
         # Bluetooth RFCOMM connections to a local TCP port inside the Deck.
-        bt_tcp_port = self._bind_available_tcp_port(socket.socket(socket.AF_INET, socket.SOCK_STREAM), port_low=1730, port_mid=1740)
-
-        helper_proc = subprocess.Popen(
-            [sys.executable or "/usr/bin/python", helper, str(bt_tcp_port)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        # sys.executable is the PyInstaller-wrapped PluginLoader binary in Decky's
+        # embedded Python, NOT a general-purpose Python interpreter. Always use
+        # the system Python instead.
+        system_python = shutil.which("python") or "/usr/bin/python"
+        bt_tcp_port = self._bind_available_tcp_port(
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM), port_low=1730, port_mid=1740
         )
+
+        try:
+            helper_proc = subprocess.Popen(
+                [system_python, helper, str(bt_tcp_port)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            )
+        except OSError as exc:
+            self._write_event("bluetooth_init_failed", {"error": f"helper spawn failed: {exc}"})
+            self._set_diagnostic("bt_working", False)
+            return
+
         self._bt_helper_proc = helper_proc
 
         # Read one line to confirm startup.
@@ -322,6 +334,11 @@ class KDEckKdeReceiver:
         if "BT listening" not in line:
             self._write_event("bluetooth_init_failed", {"error": f"helper startup failed: {line.strip()}"})
             self._set_diagnostic("bt_working", False)
+            try:
+                helper_proc.kill()
+            except OSError:
+                pass
+            self._bt_helper_proc = None
             return
 
         self._set_diagnostic("bt_working", True)

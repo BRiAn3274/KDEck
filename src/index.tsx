@@ -2,6 +2,7 @@ import {
   ButtonItem,
   PanelSection,
   PanelSectionRow,
+  Router,
   staticClasses,
 } from "@decky/ui";
 import { callable, definePlugin, routerHook, toaster } from "@decky/api";
@@ -198,10 +199,7 @@ function Content() {
               saveNotebook(clipboardTextRef.current).catch(() => undefined);
             }}
             onFocus={() => { editingRef.current = true; }}
-            onClick={(event) => {
-              event.currentTarget.focus();
-              try { (window as any).SteamClient?.Input?.SetGamepadKeyboardText?.(true, clipboardTextRef.current); } catch (_) {}
-            }}
+            onClick={(event) => { event.currentTarget.focus(); }}
             onChange={(event) => setText(event.currentTarget.value)}
             onKeyDown={handleClipboardEnter}
           />
@@ -227,7 +225,7 @@ function Content() {
       </PanelSection>
       <PanelSection title={text.sendFile}>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => { window.location.hash = "/kdeck/send"; }}>
+          <ButtonItem layout="below" onClick={() => { try { Router.Navigate("/kdeck/send"); } catch (_) { window.location.hash = "/kdeck/send"; } }}>
             {text.sendFile}
           </ButtonItem>
         </PanelSectionRow>
