@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.5 - 2026-06-04
+
+- Bluetooth support: RFCOMM server on channel 22 for KDE Connect over Bluetooth. Reuses existing TLS + protocol handler. Graceful degradation if BT hardware unavailable.
+- Dev deployment: `:kdeck update <url>` hidden command downloads and installs KDEck.zip from HTTP URL. `tools/deploy_to_deck.ps1` for SSH-based one-click deploy.
+- Build: version injected from `package.json` via rollup, eliminating hardcoded `APP_VERSION`. CI now builds and uploads release artifact.
+- Fake client: `recv-file` command for reverse file transfer testing.
+- i18n: 6 send-file error codes added to both zh-CN and en error dictionaries.
+- Code cleanup: removed 115 lines of dead pending_pair code. Fixed React hooks violation causing render failure on Decky hardware.
+- Removed `defaults/defaults.txt` placeholder per Decky store review requirements.
+- Version bumped to 0.5.5.
+
 ## 0.5.4 - 2026-05-30
 
 - Generalized file scanner: `list_sendable_files(category)` supports screenshots, recordings, and logs with a unified API.
