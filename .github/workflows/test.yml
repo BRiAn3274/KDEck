@@ -27,5 +27,13 @@ jobs:
         with:
           node-version: "20"
           cache: "pnpm"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - run: python tools/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KDEck
+          path: release/KDEck.zip

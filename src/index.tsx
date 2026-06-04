@@ -17,13 +17,13 @@ import {
   infoTextStyle,
   inputStyle,
   resultMessage,
-  shortDeviceName,
 } from "./utils";
 import { DeviceRow, TextRow } from "./components";
 
+declare var __KDECK_VERSION__: string;
+
 const ACTION_COOLDOWN_MS = 700;
 const CLIPBOARD_POLL_MS = 3000;
-const APP_VERSION = "0.5.4";
 
 const getConnectionSummary = callable<[], ConnectionSummary>("get_connection_summary");
 const setClipboard = callable<[text: string], ApiResult>("set_clipboard");
@@ -343,7 +343,7 @@ function Content() {
 
 export default definePlugin(() => ({
   name: "KDEck",
-  titleView: <div className={staticClasses.Title}>KDEck v{APP_VERSION}</div>,
+  titleView: <div className={staticClasses.Title}>KDEck v{__KDECK_VERSION__}</div>,
   content: <Content />,
   icon: <FaLink />,
 }));
