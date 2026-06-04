@@ -115,6 +115,7 @@ class KDEckKdeReceiver:
         self.connection_threads: list[threading.Thread] = []
         self.tcp_socket: Optional[socket.socket] = None
         self.udp_socket: Optional[socket.socket] = None
+        self.bt_socket: Optional[socket.socket] = None
         self.tcp_port: Optional[int] = None
         self.peer_connect_attempts: dict[str, float] = {}
         self.state_lock = threading.Lock()
@@ -124,6 +125,8 @@ class KDEckKdeReceiver:
         self.diagnostics: dict[str, Any] = {
             "udp_working": False,
             "tcp_working": False,
+            "bt_working": False,
+            "bt_error": None,
             "udp_error": None,
             "tcp_error": None,
             "last_error": None,
@@ -167,6 +170,9 @@ class KDEckKdeReceiver:
             thread = threading.Thread(target=target, name=name, daemon=True)
             thread.start()
             self.threads.append(thread)
+        bt_thread = threading.Thread(target=self._bluetooth_server, name="KDEckKdeBtServer", daemon=True)
+        bt_thread.start()
+        self.threads.append(bt_thread)
         self._wait_for_listener_state(timeout=1.0)
         thread = threading.Thread(target=self._broadcast_loop, name="KDEckKdeBroadcaster", daemon=True)
         thread.start()
@@ -175,7 +181,7 @@ class KDEckKdeReceiver:
 
     def stop(self) -> dict[str, Any]:
         self.stop_event.set()
-        for sock in (self.tcp_socket, self.udp_socket):
+        for sock in (self.tcp_socket, self.udp_socket, self.bt_socket):
             try:
                 if sock:
                     sock.close()
@@ -183,6 +189,7 @@ class KDEckKdeReceiver:
                 pass
         self.tcp_socket = None
         self.udp_socket = None
+        self.bt_socket = None
         for thread in self.threads:
             if thread.is_alive():
                 thread.join(timeout=1.5)
@@ -245,6 +252,8 @@ class KDEckKdeReceiver:
             "udp_port": UDP_PORT,
             "udp_working": diagnostics.get("udp_working"),
             "tcp_working": diagnostics.get("tcp_working"),
+            "bt_working": diagnostics.get("bt_working"),
+            "bt_error": diagnostics.get("bt_error"),
             "udp_error": diagnostics.get("udp_error"),
             "tcp_error": diagnostics.get("tcp_error"),
             "current_ips": [item["address"] for item in diagnostics.get("interfaces", []) if item.get("address")],
@@ -270,6 +279,64 @@ class KDEckKdeReceiver:
             "legacy_trusted_devices": [device_id for device_id in trusted if device_id not in valid_trusted],
             "last_events": self._tail_events(20),
         }
+
+    def _bluetooth_server(self) -> None:
+        try:
+            bt_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+            bt_sock.bind(("", 22))
+            bt_sock.listen(1)
+            bt_sock.settimeout(3)
+            self.bt_socket = bt_sock
+        except (OSError, AttributeError) as exc:
+            self._set_diagnostic("bt_working", False)
+            self._set_diagnostic("bt_error", {"message": str(exc), "time": int(time.time())})
+            self._write_event("bluetooth_init_failed", {"error": str(exc)})
+            return
+        self._set_diagnostic("bt_working", True)
+        self._set_diagnostic("bt_error", None)
+        self._write_event("bluetooth_listening", {"channel": 22})
+        while not self.stop_event.is_set():
+            try:
+                conn, addr = bt_sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            self._start_connection_thread(
+                lambda c=conn, a=addr: self._handle_incoming_bt(c, a),
+                f"KDEckBtHandler-{addr}",
+            )
+
+    def _handle_incoming_bt(self, conn: socket.socket, addr: str) -> None:
+        bt_id = str(addr).replace(":", "")[:16]
+        try:
+            self._write_event("incoming_bt_connected", {"addr": str(addr)})
+            identity = self._read_plain_packet(conn)
+            body = identity.get("body") or {}
+            peer_id = body.get("deviceId")
+            if identity.get("type") != PACKET_IDENTITY or not peer_id:
+                self._write_event("incoming_bt_identity_invalid", {"addr": str(addr), "packet_type": identity.get("type")})
+                conn.close()
+                return
+            self._write_event("incoming_bt_identity_received", {"addr": str(addr), "device_id": peer_id, "device_name": body.get("deviceName")})
+            # TLS: Bluetooth uses client-side TLS (same as incoming TCP)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            context.load_cert_chain(str(self.cert_path), str(self.key_path))
+            self._write_event("incoming_bt_tls_start", {"addr": str(addr), "device_id": peer_id})
+            tls = context.wrap_socket(conn, server_hostname=peer_id, do_handshake_on_connect=True)
+            self._write_event("incoming_bt_tls_done", {"addr": str(addr), "device_id": peer_id})
+            self._after_tls(tls, peer_id, peer_host=bt_id, send_identity_first=True)
+        except Exception as exc:
+            self._log("KDE receiver BT connection failed from %s: %s", addr, exc)
+            error = {"stage": "incoming_bt", "addr": str(addr), "error_type": type(exc).__name__, "message": str(exc), "time": int(time.time())}
+            self._set_diagnostic("last_error", error)
+            self._write_event("incoming_bt_failed", error)
+            try:
+                conn.close()
+            except OSError:
+                pass
 
     def _tcp_server(self) -> None:
         try:
