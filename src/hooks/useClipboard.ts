@@ -40,11 +40,9 @@ export function useClipboard(toast: (body: string) => void, run: (label: string,
     initializedClipboardRef.current = true;
   };
 
-  const handleClipboardEnter = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Enter") return;
+  const executeHiddenCommand = () => {
     const command = clipboardTextRef.current.trim().toLowerCase();
     if (!command.startsWith(":kdeck")) return;
-    event.preventDefault();
     editingRef.current = false;
     skipNextBlurSaveRef.current = true;
     setText("");
@@ -54,6 +52,11 @@ export function useClipboard(toast: (body: string) => void, run: (label: string,
       if (result.ok && result.path && !result.message) toast(`${text.logsExported}: ${result.path}`);
       return result;
     }, true);
+  };
+
+  const handleClipboardEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return;
+    executeHiddenCommand();
   };
 
   const handleBlur = () => {
@@ -115,6 +118,7 @@ export function useClipboard(toast: (body: string) => void, run: (label: string,
     clipboardTextRef,
     setText,
     handleClipboardEnter,
+    executeHiddenCommand,
     handleBlur,
     handleFocus,
     handleChange,

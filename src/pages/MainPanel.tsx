@@ -3,6 +3,7 @@ import {
   PanelSection,
   PanelSectionRow,
   Router,
+  TextField,
 } from "@decky/ui";
 import { callable } from "@decky/api";
 import { useRef, useState } from "react";
@@ -12,7 +13,6 @@ import {
   deviceState,
   formatFileSummary,
   formatIp,
-  inputStyle,
   resultMessage,
 } from "../utils";
 import { DeviceRow, TextRow } from "../components";
@@ -89,28 +89,33 @@ export default function MainPanel() {
 
       <PanelSection title={text.clipboard}>
         <PanelSectionRow>
-          <input
-            aria-label={text.clipboard}
+          <style>{`
+            .kdeck-clipboard-input {
+              width: 100%; box-sizing: border-box; padding: 7px 10px !important;
+              font-size: 15px !important; font-weight: 400 !important;
+              line-height: 20px !important; text-align: left !important;
+            }
+          `}</style>
+          <TextField
+            {...({ "aria-label": text.clipboard, className: "kdeck-clipboard-input" } as any)}
             value={clipboard.clipboardText}
             disabled={!!busyAction}
-            style={inputStyle}
             onBlur={clipboard.handleBlur}
             onFocus={clipboard.handleFocus}
-            onChange={(event) => clipboard.handleChange(event.currentTarget.value)}
-            onKeyDown={clipboard.handleClipboardEnter}
+            onChange={(e) => clipboard.handleChange(e?.target?.value ?? "")}
+            onKeyDown={clipboard.handleClipboardEnter as any}
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <span style={{ fontSize: "11px", color: "#888", padding: "2px 10px", display: "block" }}>{text.keyboardHint}</span>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            disabled={!!busyAction || !clipboard.clipboardText}
-            onClick={() => run(text.syncText, clipboard.syncClipboard)}
-          >
-            {text.syncText}
-          </ButtonItem>
+          <div onDoubleClick={() => clipboard.executeHiddenCommand()}>
+            <ButtonItem
+              layout="below"
+              disabled={!!busyAction || !clipboard.clipboardText}
+              onClick={() => run(text.syncText, clipboard.syncClipboard)}
+            >
+              {text.syncText}
+            </ButtonItem>
+          </div>
         </PanelSectionRow>
       </PanelSection>
       <PanelSection title={text.receiveFile}>

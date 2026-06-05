@@ -2,6 +2,7 @@ import {
   ButtonItem,
   PanelSection,
   PanelSectionRow,
+  TextField,
 } from "@decky/ui";
 import { callable } from "@decky/api";
 import { useEffect, useState } from "react";
@@ -73,7 +74,7 @@ function FileItem({
         onClick={onSend}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "2px 0" }}>
-          <span style={{ ...infoTextStyle, flex: 1, color: oversize ? "#e07070" : undefined }}>
+          <span style={{ ...infoTextStyle, flex: 1, color: oversize ? "#e07070" : sending ? "#88cc88" : undefined }}>
             {sending ? `${text.sending}…` : file.name}
           </span>
           <span style={{ fontSize: "12px", color: oversize ? "#e07070" : "#888", flexShrink: 0, marginLeft: "8px" }}>
@@ -81,6 +82,15 @@ function FileItem({
           </span>
         </div>
       </ButtonItem>
+      {sending && (
+        <div style={{ height: "3px", background: "#2a3a4a", borderRadius: "2px", margin: "0 4px", overflow: "hidden" }}>
+          <style>{`@keyframes kdeck-progress-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }`}</style>
+          <div style={{
+            height: "100%", width: "40%", background: "linear-gradient(90deg, transparent, #88cc88, transparent)",
+            borderRadius: "2px", animation: "kdeck-progress-slide 1.5s ease-in-out infinite",
+          }} />
+        </div>
+      )}
     </PanelSectionRow>
   );
 }
@@ -91,6 +101,7 @@ export default function SendPage() {
   const [sendingPath, setSendingPath] = useState("");
   const [selectedDevice, setSelectedDevice] = useState("");
   const [trustedDevices, setTrustedDevices] = useState<Array<{ id: string; name: string }>>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const toast = useToast();
 
   useEffect(() => {
@@ -135,6 +146,24 @@ export default function SendPage() {
 
   const handleSend = async (file: SendableFile) => {
     if (sendingPath || !selectedDevice) return;
+    // Fresh connectivity check: verify selected device is actually online
+    try {
+      const freshSummary = await getConnectionSummary();
+      const freshManaged = freshSummary.managed_kde;
+      const freshTrustedIds = Object.keys(freshManaged?.trusted_devices || {});
+      const discovered = freshManaged?.discovered_devices || [];
+      const now = Math.floor(Date.now() / 1000);
+      const onlineDevice = discovered.find(
+        (d) => d.device_id && freshTrustedIds.includes(d.device_id) && d.last_seen && (now - d.last_seen) < 180,
+      );
+      if (!onlineDevice?.device_id) {
+        toast(text.noDeviceConnected);
+        return;
+      }
+    } catch {
+      toast(text.noDeviceConnected);
+      return;
+    }
     setSendingPath(file.path);
     const result = await sendFileToPhone(file.path, selectedDevice).catch(() => ({ ok: false }));
     toast(result.ok ? text.fileSent : `${text.fileSendFailed}: ${resultMessage(result)}`);
@@ -147,6 +176,9 @@ export default function SendPage() {
     { key: "logs", label: text.tabLogs },
   ];
   const maxFileSize = category === "recordings" ? 500 * 1024 * 1024 : category === "logs" ? 50 * 1024 * 1024 : 0;
+  const filteredFiles = searchQuery
+    ? files.filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    : files;
 
   return (
     <PanelSection title={text.sendFile}>
@@ -176,13 +208,28 @@ export default function SendPage() {
             disabled={sendingPath !== ""}
           />
 
+          {/* Search box */}
+          <PanelSectionRow>
+            <div style={{ display: "flex", justifyContent: "flex-end", padding: "2px 0" }}>
+              <TextField
+                {...({ placeholder: text.searchPlaceholder, className: "kdeck-search-input" } as any)}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e?.target?.value ?? "")}
+              />
+            </div>
+            <style>{`
+              .kdeck-search-input { width: 50%; min-width: 0; }
+              .kdeck-search-input input { font-size: 13px !important; padding: 4px 8px !important; }
+            `}</style>
+          </PanelSectionRow>
+
           {/* File list — each file is a full ButtonItem for gamepad A-button send */}
-          {files.length === 0 ? (
+          {filteredFiles.length === 0 ? (
             <PanelSectionRow>
               <span style={infoTextStyle}>{text.noFiles}</span>
             </PanelSectionRow>
           ) : (
-            files.map((file, idx) => {
+            filteredFiles.map((file, idx) => {
               const oversize = maxFileSize > 0 && file.size > maxFileSize;
               return (
                 <FileItem
