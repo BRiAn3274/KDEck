@@ -23,8 +23,8 @@ python tools/package_release.py
 ## 提交前检查
 
 - `package.json` 已按语义化版本更新。
-- `src/index.tsx` 中显示的版本号和 `package.json` 一致。
-- `CHANGELOG.md` 已记录本次改动。
+- `src/index.tsx` 中 `__KDECK_VERSION__` 由 rollup 从 `package.json` 注入，无需手动同步。
+- `CHANGELOG.md` 和 `CHANGELOG.zh-CN.md` 已记录本次改动。
 - `plugin.json` 的 `publish.description`、`publish.tags`、`publish.image` 可用。
 - `LICENSE` 存在。
 - `README.md` 默认为英文主页，`README.zh-CN.md` 提供中文说明。
@@ -32,8 +32,8 @@ python tools/package_release.py
 
 ## 审核说明
 
-- KDEck 有 Python 后端，核心功能是游戏模式里的最小 KDE Connect 兼容接收端。
-- KDEck 只接收手机发送到 Deck 的剪贴板文本和文件，不提供通知、短信、远程输入、媒体控制等完整 KDE Connect 功能。
+- KDEck 有 Python 后端，核心功能是游戏模式里的最小 KDE Connect 兼容接收端，同时支持从 Deck 发送文件到手机。
+- KDEck 接收手机发送到 Deck 的剪贴板文本和文件，也可以把 Deck 上的截图、录像、日志发送到手机。不提供通知、短信、远程输入、媒体控制等完整 KDE Connect 功能。
 - KDEck 使用独立设备 ID、证书和配置目录，不注册 `org.kde.kdeconnect`，不写入桌面模式 KDE Connect 的配对配置。
 - 进入 Plasma 桌面模式时，KDEck 会暂停 receiver 并释放 KDE Connect LAN discovery 端口；回到游戏模式后自动恢复。
 - KDEck 的协议兼容性来自 KDE Connect 生态，但 KDEck 是独立项目，不隶属于 KDE e.V. 或 KDE Connect 项目，也不包含 KDE Connect 源码。
@@ -59,6 +59,7 @@ KDEck is a Decky Loader plugin for Steam Deck game mode. It provides a minimal K
 Scope:
 - Receives KDE Connect clipboard text from a phone.
 - Receives KDE Connect shared files from a phone.
+- Sends screenshots, recordings, and log files from the Deck to a paired phone.
 - Does not provide notifications, SMS, remote input, media control, or the full KDE Connect desktop feature set.
 
 Isolation:

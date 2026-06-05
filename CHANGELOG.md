@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0 - 2026-06-05
+
+- Keyboard input: replaced native `<input>` with `@decky/ui` `TextField` for clipboard and search inputs. The Steam Deck on-screen keyboard now works natively in both the QAM panel and the send-file route page, where `SteamClient.System` is unavailable.
+- Search box: the send-file page now has a search input (top-right, aligned with the category title) for filtering files by name. Uses `TextField` for full keyboard support.
+- Send validation: before sending a file, the frontend now performs a fresh connectivity check — verifying `discovered_devices` with `last_seen` within 180 seconds — and shows a toast if no target device is online.
+- Progress animation: file sending now shows an animated sliding progress indicator instead of a static green bar.
+- Hidden commands via double-click: the "Sync Text" button now supports double-click to execute hidden `:kdeck` debug commands, in addition to pressing Enter in the text field.
+- Removed the keyboard hint row below the clipboard input (no longer needed since `TextField` handles keyboard invocation).
+- i18n: added `noDeviceConnected` and `searchPlaceholder` strings in zh-CN and en.
+- CI: fixed 22 pre-existing ruff lint errors in Python backend (unused imports, unsorted imports, module-level import placement, loop variable binding in lambda).
+- Version bumped to 0.6.0.
+
+## 0.5.6 - 2026-06-04
+
+- Major code refactor: backend split into modular files (`kdeck_daemon.py`, `kdeck_clipboard.py`, `kdeck_config.py`, `kdeck_network.py`, `kdeck_file_manager.py`, `kdeck_bt_helper.py`, `kdeck_diagnostics.py`, `kdeck_updater.py`). Frontend restructured into pages (`MainPanel.tsx`, `SendPage.tsx`), hooks (`useClipboard`, `useConnection`, `useToast`), components, and shared utilities.
+- Send file entry: "Send File" button in the QAM sidebar navigates to a full-screen route page via Decky `routerHook`.
+- Daemon auto-restart: the managed daemon now auto-restarts on unexpected exits.
+- Bluetooth status display: the main panel shows Bluetooth connection status. Port exhaustion hint added to diagnostics.
+- Bluetooth for SteamOS: fixed BT helper launch on SteamOS.
+- Gamepad-friendly send page: file rows are full `ButtonItem` elements for gamepad A-button activation.
+- Keyboard hint: added a hint row below the clipboard input about keyboard usage (later removed in 0.6.0).
+- Version bumped to 0.5.6.
+
 ## 0.5.5 - 2026-06-04
 
 - Bluetooth support: RFCOMM server on channel 22 with SDP registration for PC/phone discovery. Reuses existing TLS + protocol handler. Graceful degradation.

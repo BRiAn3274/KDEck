@@ -11,10 +11,12 @@ License: BSD-3-Clause
 
 - Receive clipboard text from a phone and show it in a compact text field
 - Receive files from a phone and save them to the Steam Deck `Downloads` directory
+- Send files from the Steam Deck to a phone: browse screenshots, recordings, and logs from the Decky sidebar with search, progress animation, and pre-send connectivity validation
 - Show the current Deck IP as a fallback for manual device entry in KDE Connect
 - Show the latest received file
+- Native on-screen keyboard support via `@decky/ui` TextField in both the QAM panel and the send-file route page
 
-KDEck only focuses on receiving text and files. It does not implement notifications, SMS, remote input, media control, or the full KDE Connect desktop feature set.
+KDEck focuses on clipboard text and file transfer in both directions. It does not implement notifications, SMS, remote input, media control, or the full KDE Connect desktop feature set.
 
 When Plasma desktop mode is active, KDEck pauses its game-mode receiver and releases the KDE Connect LAN discovery port. The receiver resumes after returning to game mode. This isolation is designed to avoid interfering with the official desktop-mode KDE Connect service.
 
@@ -51,6 +53,14 @@ Send a file:
 2. Choose KDE Connect.
 3. Choose KDEck.
 4. The file is saved to the Steam Deck `Downloads` directory.
+
+Send a file from the Deck to a phone:
+
+1. Open the KDEck panel in the Decky sidebar.
+2. Choose "Send File" to open the file management page.
+3. Select a category (Screenshots / Recordings / Logs) and optionally search by name.
+4. Choose a target device if multiple are available, then select a file to send.
+5. The plugin verifies device connectivity before sending. An animated progress indicator shows during transfer.
 
 ## FAQ
 
@@ -92,7 +102,7 @@ KDEck's design goal and protocol compatibility are based on the KDE Connect ecos
 - Desktop repository: `https://invent.kde.org/network/kdeconnect-kde`
 - Android repository: `https://invent.kde.org/network/kdeconnect-android`
 
-KDEck is an independent project. It is not affiliated with KDE e.V. or the KDE Connect project, and it is not an official KDE release. KDEck implements only the minimal compatible receiver needed for clipboard text and shared files. It does not include KDE Connect source code or provide the full KDE Connect feature set.
+KDEck is an independent project. It is not affiliated with KDE e.V. or the KDE Connect project, and it is not an official KDE release. KDEck implements only the minimal compatible receiver needed for bidirectional clipboard text and file transfer. It does not include KDE Connect source code or provide the full KDE Connect feature set.
 
 ## Development
 
@@ -141,7 +151,7 @@ Hidden developer commands:
 :kdeck share logs
 ```
 
-Enter one command in the KDEck clipboard text field and press Enter. These commands are intentionally hidden so normal users still see the field as a simple clipboard display, while testers can use it as a small diagnostic console. The command text is not saved as clipboard content.
+Enter one command in the KDEck clipboard text field and press Enter, or double-click the "Sync Text" button. These commands are intentionally hidden so normal users still see the field as a simple clipboard display, while testers can use it as a small diagnostic console. The command text is not saved as clipboard content.
 
 - `:kdeck help` lists available hidden commands.
 - `:kdeck status` shows the receiver diagnostic summary.

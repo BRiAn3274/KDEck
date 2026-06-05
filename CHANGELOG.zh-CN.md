@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0 - 2026-06-05
+
+- 键盘输入：剪贴板和搜索框从原生 `<input>` 改为 `@decky/ui` `TextField`，Steam Deck 屏幕键盘在 QAM 面板和收发文件路由页面都能正常唤起（路由页面没有 `SteamClient.System`）。
+- 搜索框：收发文件页面右上角新增搜索输入框，与分类标题对齐，可按文件名过滤。使用 `TextField` 保证键盘支持。
+- 发送前验证：发送文件前会重新检查 `discovered_devices` 的 `last_seen` 是否在 180 秒内，如果没有在线设备会弹 toast 提示。
+- 进度动画：发送文件时显示滑动渐变进度条，替代原来的静态绿条。
+- 隐藏命令双击触发："同步文本框"按钮现在支持双击执行 `:kdeck` 隐藏调试命令，与在文本框按 Enter 等效。
+- 移除剪贴板下方的键盘提示行（`TextField` 已原生处理键盘唤起）。
+- i18n：新增 `noDeviceConnected` 和 `searchPlaceholder` 中英文字符串。
+- CI：修复 Python 后端 22 个预先存在的 ruff lint 错误（未使用 import、import 排序、模块级 import 位置、lambda 循环变量绑定）。
+- 版本更新到 0.6.0。
+
+## 0.5.6 - 2026-06-04
+
+- 大规模代码重构：后端拆分为模块文件（`kdeck_daemon.py`、`kdeck_clipboard.py`、`kdeck_config.py`、`kdeck_network.py`、`kdeck_file_manager.py`、`kdeck_bt_helper.py`、`kdeck_diagnostics.py`、`kdeck_updater.py`）。前端重构为页面（`MainPanel.tsx`、`SendPage.tsx`）、hooks（`useClipboard`、`useConnection`、`useToast`）、组件和共享工具函数。
+- 发送文件入口：QAM 侧边栏"发送文件"按钮通过 Decky `routerHook` 跳转到全屏路由页面。
+- daemon 自动重启：受管 daemon 异常退出后会自动重启。
+- 蓝牙状态显示：主面板显示蓝牙连接状态，诊断信息新增端口耗尽提示。
+- SteamOS 蓝牙修复：修复 BT helper 在 SteamOS 上的启动问题。
+- 手柄友好发送页：文件行改为完整 `ButtonItem`，支持手柄 A 键直接触发发送。
+- 键盘提示：剪贴板输入框下方新增键盘使用提示行（后在 0.6.0 移除）。
+- 版本更新到 0.5.6。
+
 ## 0.5.5 - 2026-06-04
 
 - 蓝牙支持：RFCOMM 通道 22 + SDP 服务注册，PC/手机可通过蓝牙发现并连接。复用现有 TLS + 协议处理，蓝牙不可用时自动降级。
