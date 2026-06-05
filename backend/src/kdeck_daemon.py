@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import kdeck_config as config
-from kdeck_config import CommandResult
 
 MAX_RESTART_ATTEMPTS = 3
 RESTART_BACKOFF_BASE = 2  # seconds: 2, 4, 8

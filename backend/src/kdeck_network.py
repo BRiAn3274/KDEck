@@ -5,8 +5,6 @@ import json
 import socket
 from typing import Any, Optional
 
-from kdeck_config import CommandResult
-
 IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "mihomo", "clash")
 
 INTERFACE_PRIORITIES = {

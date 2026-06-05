@@ -10,8 +10,8 @@ import socket
 import subprocess
 import sys
 import threading
-import time
-from bluetooth import BluetoothSocket, RFCOMM
+
+from bluetooth import RFCOMM, BluetoothSocket
 
 BT_CHANNEL = 22
 

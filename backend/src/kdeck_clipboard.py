@@ -1,10 +1,7 @@
 """KDEck clipboard — read/write the system clipboard with multi-tool fallback."""
 
 import shutil
-import subprocess
 from typing import Any, Optional
-
-from kdeck_config import CommandResult, command_env_base, deck_user, default_env
 
 
 class KDEckClipboard:

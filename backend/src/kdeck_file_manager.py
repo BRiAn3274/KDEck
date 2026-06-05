@@ -35,7 +35,6 @@ class KDEckFileManager:
     async def share_file(self, device_id: str, path: str) -> dict[str, Any]:
         import shutil
 
-        from kdeck_config import CommandResult
 
         normalized = self._validate_device_id(device_id)
         if not normalized["ok"]:

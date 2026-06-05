@@ -28,9 +28,9 @@ import kdeck_config as config
 from kdeck_clipboard import KDEckClipboard
 from kdeck_config import CommandResult
 from kdeck_daemon import KDEckDaemon
-from kdeck_diagnostics import KDEckDiagnostics, build_status, parse_device_list
+from kdeck_diagnostics import KDEckDiagnostics
 from kdeck_file_manager import KDEckFileManager
-from kdeck_kde_receiver import KDEckKdeReceiver, interface_path_type, interface_priority, is_ignored_interface, is_usable_ipv4
+from kdeck_kde_receiver import KDEckKdeReceiver
 from kdeck_network import KDEckNetwork
 from kdeck_notebook import KDEckNotebook
 from kdeck_updater import KDEckUpdater

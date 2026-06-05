@@ -1,8 +1,9 @@
 """KDEck diagnostics — system status checks and connection summary."""
 
+import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import kdeck_config as config
 
@@ -131,7 +132,6 @@ class KDEckDiagnostics:
 
     async def _list_devices(self) -> dict[str, Any]:
         """List devices via kdeconnect-cli (requires daemon running)."""
-        import re
 
         if not shutil.which("kdeconnect-cli"):
             return {"ok": False, "error": {"code": "missing_cli", "message": "kdeconnect-cli not found."}, "paired": [], "available": []}
@@ -210,9 +210,6 @@ class KDEckDiagnostics:
 # ---------------------------------------------------------------------------
 # Device list parser (extracted from original kdeck_backend)
 # ---------------------------------------------------------------------------
-
-import re
-from typing import Optional
 
 
 def parse_device_list(output: str) -> list[dict[str, Any]]:

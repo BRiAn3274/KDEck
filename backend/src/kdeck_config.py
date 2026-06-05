@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-
 # ---------------------------------------------------------------------------
 # Runtime overrides (set once at startup from main.py / decky env)
 # ---------------------------------------------------------------------------

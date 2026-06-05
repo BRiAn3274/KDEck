@@ -360,7 +360,7 @@ class KDEckKdeReceiver:
             except OSError:
                 break
             self._start_connection_thread(
-                lambda c=conn, a=addr: self._handle_incoming_bt(c, str(addr)),
+                lambda c=conn, a=addr: self._handle_incoming_bt(c, str(a)),
                 f"KDEckBtHandler-{addr}",
             )
 
