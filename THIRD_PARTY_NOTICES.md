@@ -12,7 +12,7 @@ KDEck is inspired by and compatible with a small part of the KDE Connect ecosyst
 
 KDE Connect is developed by the KDE community. KDEck is an independent project and is not affiliated with, endorsed by, or maintained by KDE e.V. or the KDE Connect project.
 
-KDEck does not bundle KDE Connect source code. It implements only the minimal receiver behavior needed for KDE Connect-compatible pairing, clipboard receive, and file receive.
+KDEck does not bundle KDE Connect source code. It implements only the minimal behavior needed for KDE Connect-compatible pairing, clipboard receive, file receive, and file send.
 
 ## Runtime Dependencies Not Bundled
 
@@ -22,7 +22,7 @@ KDEck keeps its game mode receiver separate from the SteamOS desktop KDE Connect
 - `kdeconnect-cli`
 - KDE Connect DBus interfaces
 
-These components are not copied into this plugin package. Their licenses and security updates are provided by the operating system packages. The ordinary user-facing receive path uses KDEck's own minimal LAN receiver and saves incoming files to `/home/deck/Downloads`.
+These components are not copied into this plugin package. Their licenses and security updates are provided by the operating system packages. The ordinary user-facing path uses KDEck's own minimal LAN receiver for incoming data and a TLS file server for outgoing file transfers.
 
 ## JavaScript Dependencies
 
@@ -32,13 +32,19 @@ Use `pnpm list --depth -1` in the project directory to inspect the exact depende
 
 ## Protocol Boundary
 
-KDEck implements only the small KDE Connect-compatible LAN receiver surface needed for pairing, clipboard receive, and file receive:
+KDEck implements only the small KDE Connect-compatible LAN surface needed for pairing, clipboard, and file transfer:
+
+Incoming (receiver):
 
 - `kdeconnect.identity`
 - `kdeconnect.pair`
 - `kdeconnect.clipboard`
 - `kdeconnect.clipboard.connect`
 - `kdeconnect.share.request`
+
+Outgoing (sender):
+
+- `kdeconnect.share.request` (Deck sends files to a paired phone)
 
 It does not provide notifications, SMS, remote input, media control, or the full KDE Connect desktop feature set.
 

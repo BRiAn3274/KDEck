@@ -90,7 +90,7 @@ This is the user's `Downloads` directory in Steam Deck desktop mode.
 
 ## Current Status
 
-KDEck is under active development. Clipboard receive and file receive have been verified on real hardware with multiple phone models. Automatic discovery works on most home Wi-Fi networks; manual IP entry remains the fallback for restricted or multi-interface environments.
+KDEck is under active development. Clipboard receive, file receive, and file send (screenshots, recordings, logs) have been verified on real hardware with multiple phone models. Automatic discovery works on most home Wi-Fi networks; manual IP entry remains the fallback for restricted or multi-interface environments.
 
 KDEck uses its own device ID, certificate, and configuration directory. It does not register `org.kde.kdeconnect` and does not write to the desktop-mode KDE Connect pairing configuration.
 
