@@ -1,6 +1,8 @@
 # KDEck
 
 English | [简体中文](README.zh-CN.md)
+<img width="1865" height="1167" alt="KDEck发送页面" src="https://github.com/user-attachments/assets/ac8d4222-7a47-46b3-84eb-98169e7e3e46" />
+<img width="1860" height="1165" alt="KDEck主界面" src="https://github.com/user-attachments/assets/323c75c9-8d4b-4ace-ac4c-fa04ccb6986d" />
 
 KDEck is a Decky Loader plugin for Steam Deck game mode.
 
@@ -59,7 +61,7 @@ stale state.
 4. Accept the pairing request.
 
 If discovery does not work, manually add the Steam Deck IP address shown in the
-KDEck panel. Guest Wi-Fi, AP isolation, VPNs, overlay networks, and routing
+KDEck panel. Guest Wi-Fi, AP isolation, VPNs, overlay networks, 和 routing
 rules can prevent KDE Connect discovery.
 
 To reset KDEck identity and pairing data, enter this command in the KDEck text
@@ -93,7 +95,7 @@ The panel text field accepts these diagnostic commands:
 ```
 
 Diagnostic exports are intended for issue reports. They redact sensitive paths,
-commands, fingerprints, clipboard content, private keys, and full device
+commands, fingerprints, clipboard content, private keys, 和 full device
 identifiers.
 
 ## Root Flag
