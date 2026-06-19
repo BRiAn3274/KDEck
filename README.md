@@ -1,7 +1,10 @@
 # KDEck
 
 English | [简体中文](README.zh-CN.md)
-<img width="1865" height="1167" alt="KDEck发送页面" src="https://github.com/user-attachments/assets/ac8d4222-7a47-46b3-84eb-98169e7e3e46" />
+
+<img width="1976" height="1233" alt="KDEck主界面" src="https://github.com/user-attachments/assets/4e553d66-6273-4e4c-936a-f082b70823d7" />
+
+<img width="1865" height="1167" alt="KDEck发送页面" src="https://github.com/user-attachments/assets/e4ea8abf-7560-41d0-a986-382343c16955" />
 
 KDEck is a Decky Loader plugin for Steam Deck game mode.
 
