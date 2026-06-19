@@ -13,6 +13,7 @@ export function useConnection(toast: (body: string, category?: string) => void) 
   const mountedRef = useRef(false);
   const lastEventKeyRef = useRef("");
   const lastFileKeyRef = useRef("");
+  const notificationsReadyRef = useRef(false);
   const timersRef = useRef<{ status?: number }>({});
 
   const refresh = async () => {
@@ -22,6 +23,7 @@ export function useConnection(toast: (body: string, category?: string) => void) 
     const lastFile = next.managed_kde?.last_file;
     notifyManagedEvents(next.managed_kde?.last_events || [], lastFile);
     notifyLastFile(lastFile);
+    notificationsReadyRef.current = true;
   };
 
   const notifyManagedEvents = (events: ManagedEvent[], lastFile?: ManagedFile | null) => {
@@ -30,6 +32,7 @@ export function useConnection(toast: (body: string, category?: string) => void) 
     const key = `${latest.time}:${latest.event}:${latest.file || ""}:${latest.length || ""}`;
     if (key === lastEventKeyRef.current) return;
     lastEventKeyRef.current = key;
+    if (!notificationsReadyRef.current) return;
     // Skip file_receive_failed if notifyLastFile will handle it (avoids double toast)
     if (latest.event === "file_receive_failed" && lastFile?.status === "failed") return;
     if (latest.event === "file_receive_failed") toast(text.fileReceiveFailed, "file_receive_failed");
@@ -40,6 +43,7 @@ export function useConnection(toast: (body: string, category?: string) => void) 
     const key = `${file.time}:${file.status}:${file.file}:${file.size || ""}`;
     if (key === lastFileKeyRef.current) return;
     lastFileKeyRef.current = key;
+    if (!notificationsReadyRef.current) return;
     if (file.status === "received") toast(`${text.fileReceived}: ${file.file}`, "file_received");
     if (file.status === "failed") toast(`${text.fileReceiveFailed}: ${file.file}`, "file_receive_failed");
   };
