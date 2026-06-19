@@ -8,6 +8,10 @@ const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
 
 const STATUS_POLL_MS = 5000;
 
+function shouldNotifyConnectionItem(previousKey: string, nextKey: string, notificationsReady: boolean) {
+  return notificationsReady && nextKey !== previousKey;
+}
+
 export function useConnection(toast: (body: string, category?: string) => void) {
   const [summary, setSummary] = useState<ConnectionSummary>({ connection: text.checking });
   const mountedRef = useRef(false);
@@ -30,9 +34,9 @@ export function useConnection(toast: (body: string, category?: string) => void) 
     const latest = events[events.length - 1];
     if (!latest?.event || !latest.time) return;
     const key = `${latest.time}:${latest.event}:${latest.file || ""}:${latest.length || ""}`;
-    if (key === lastEventKeyRef.current) return;
+    const shouldNotify = shouldNotifyConnectionItem(lastEventKeyRef.current, key, notificationsReadyRef.current);
     lastEventKeyRef.current = key;
-    if (!notificationsReadyRef.current) return;
+    if (!shouldNotify) return;
     // Skip file_receive_failed if notifyLastFile will handle it (avoids double toast)
     if (latest.event === "file_receive_failed" && lastFile?.status === "failed") return;
     if (latest.event === "file_receive_failed") toast(text.fileReceiveFailed, "file_receive_failed");
@@ -41,9 +45,9 @@ export function useConnection(toast: (body: string, category?: string) => void) 
   const notifyLastFile = (file?: ManagedFile | null) => {
     if (!file?.time || !file.file) return;
     const key = `${file.time}:${file.status}:${file.file}:${file.size || ""}`;
-    if (key === lastFileKeyRef.current) return;
+    const shouldNotify = shouldNotifyConnectionItem(lastFileKeyRef.current, key, notificationsReadyRef.current);
     lastFileKeyRef.current = key;
-    if (!notificationsReadyRef.current) return;
+    if (!shouldNotify) return;
     if (file.status === "received") toast(`${text.fileReceived}: ${file.file}`, "file_received");
     if (file.status === "failed") toast(`${text.fileReceiveFailed}: ${file.file}`, "file_receive_failed");
   };

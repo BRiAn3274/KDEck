@@ -23,61 +23,47 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from kdeck_diagnostics import diagnostic_error
-
-# Import connection-state helpers.  Socket and TLS operations stay in the
-# receiver; this module only makes small deterministic lifecycle decisions.
-from kdeck_kde_connection import peer_connect_decision as _peer_connect_decision_standalone
-
-# Import discovery helpers.  These helpers calculate target lists only; the
-# receiver remains responsible for socket I/O, event logging, and diagnostics.
+from kdeck_kde_connection import peer_connect_decision as _peer_connect_decision
 from kdeck_kde_discovery import (
-    recent_discovery_targets as _recent_discovery_targets_standalone,
+    recent_discovery_targets as _recent_discovery_targets_impl,
 )
 from kdeck_kde_discovery import (
-    trusted_direct_targets as _trusted_direct_targets_standalone,
+    trusted_direct_targets as _trusted_direct_targets_impl,
 )
-
-# Import event logger.
 from kdeck_kde_events import EventLogger
-
-# Import network utility functions from the network module.
 from kdeck_kde_network import (  # noqa: F401
-    bind_available_tcp_port as _bind_available_tcp_port_standalone,
+    bind_available_tcp_port as _bind_available_tcp_port_impl,
 )
 from kdeck_kde_network import (
-    broadcast_targets as _broadcast_targets_standalone,
+    broadcast_targets as _broadcast_targets_impl,
 )
 from kdeck_kde_network import (
-    identity_reply_ports as _identity_reply_ports_standalone,
+    identity_reply_ports as _identity_reply_ports_impl,
 )
 from kdeck_kde_network import (
-    interface_path_type as _interface_path_type_standalone,
+    interface_path_type as _interface_path_type_impl,
 )
 from kdeck_kde_network import (
-    interface_priority as _interface_priority_standalone,
+    interface_priority as _interface_priority_impl,
 )
 from kdeck_kde_network import (
-    is_ignored_interface as _is_ignored_interface_standalone,
+    is_ignored_interface as _is_ignored_interface_impl,
 )
 from kdeck_kde_network import (
-    is_usable_ipv4 as _is_usable_ipv4_standalone,
+    is_usable_ipv4 as _is_usable_ipv4_impl,
 )
 from kdeck_kde_network import (
-    merge_direct_targets as _merge_direct_targets_standalone,
+    merge_direct_targets as _merge_direct_targets_impl,
 )
 from kdeck_kde_network import (
-    network_interfaces as _network_interfaces_standalone,
+    network_interfaces as _network_interfaces_impl,
 )
 from kdeck_kde_network import (
-    peer_tls_mode as _peer_tls_mode_standalone,
+    peer_tls_mode as _peer_tls_mode_impl,
 )
 from kdeck_kde_network import (
-    source_ips_for_host as _source_ips_for_host_standalone,
+    source_ips_for_host as _source_ips_for_host_impl,
 )
-
-# Import protocol constants & packet codec from the protocol module.
-# Re-export at module level so tests that patch kdeck_kde_receiver.TCP_PORT_MIN
-# etc. continue to work.
 from kdeck_kde_protocol import (  # noqa: F401
     ANDROID_DEVICE_TYPES,
     BROADCAST_INTERVAL_SECONDS,
@@ -116,59 +102,53 @@ from kdeck_kde_protocol import (  # noqa: F401
     UDP_PORT,
 )
 from kdeck_kde_protocol import (
-    encode_packet as _encode_packet_standalone,
+    encode_packet as _encode_packet_impl,
 )
 from kdeck_kde_protocol import (
-    identity_packet as _identity_packet_standalone,
+    identity_packet as _identity_packet_impl,
 )
 from kdeck_kde_protocol import (
-    packet_payload_size as _packet_payload_size_standalone,
+    packet_payload_size as _packet_payload_size_impl,
 )
 from kdeck_kde_protocol import (
-    payload_port as _payload_port_standalone,
+    payload_port as _payload_port_impl,
 )
 from kdeck_kde_state import state_transition
-
-# Import TLS utilities.
 from kdeck_kde_tls import (  # noqa: F401
-    ensure_certificate as _ensure_certificate_standalone,
+    ensure_certificate as _ensure_certificate_impl,
 )
 from kdeck_kde_tls import (
-    peer_fingerprint as _peer_fingerprint_standalone,
-)
-
-# Import file-transfer utilities.
-from kdeck_kde_transfer import (
-    connect_to_peer_control_socket as _connect_to_peer_control_socket_standalone,
+    peer_fingerprint as _peer_fingerprint_impl,
 )
 from kdeck_kde_transfer import (
-    has_enough_space as _has_enough_space_standalone,
+    connect_to_peer_control_socket as _connect_to_peer_control_socket_impl,
 )
 from kdeck_kde_transfer import (
-    record_file_failure as _record_file_failure_standalone,
+    has_enough_space as _has_enough_space_impl,
 )
 from kdeck_kde_transfer import (
-    safe_filename as _safe_filename_standalone,
+    record_file_failure as _record_file_failure_impl,
 )
 from kdeck_kde_transfer import (
-    unique_destination as _unique_destination_standalone,
+    safe_filename as _safe_filename_impl,
 )
-
-# Import trust management helpers.
-from kdeck_kde_trust import (
-    accept_pair_record as _accept_pair_record_standalone,
+from kdeck_kde_transfer import (
+    unique_destination as _unique_destination_impl,
 )
 from kdeck_kde_trust import (
-    is_trusted_device as _is_trusted_device_standalone,
+    accept_pair_record as _accept_pair_record,
 )
 from kdeck_kde_trust import (
-    read_trusted_devices as _read_trusted_devices_standalone,
+    is_trusted_device as _is_trusted_device_impl,
 )
 from kdeck_kde_trust import (
-    remember_trusted_device_metadata as _remember_trusted_device_metadata_standalone,
+    read_trusted_devices as _read_trusted_devices_impl,
 )
 from kdeck_kde_trust import (
-    write_trusted_devices as _write_trusted_devices_standalone,
+    remember_trusted_device_metadata as _remember_trusted_device_metadata,
+)
+from kdeck_kde_trust import (
+    write_trusted_devices as _write_trusted_devices_impl,
 )
 
 # Bluetooth constants: use numeric fallbacks since PyBluez (which monkey-patches
@@ -182,10 +162,9 @@ class KDEckKdeReceiver:
     """Manages the KDE Connect protocol for a Steam Deck plugin.
 
     Handles UDP discovery, TCP/TLS connection lifecycle, pairing/trust,
-    clipboard sync, and file transfer.  Stateless helpers (protocol codec,
-    network discovery, TLS certificate management) are delegated to the
-    ``kdeck_kde_protocol``, ``kdeck_kde_network``, and ``kdeck_kde_tls``
-    modules respectively.
+    clipboard sync, and file transfer.  Private wrapper methods are kept for
+    the parts that need receiver state (locks, diagnostics, event logging, and
+    test seams); pure calculations live in sibling modules.
     """
 
     def __init__(
@@ -1139,7 +1118,7 @@ class KDEckKdeReceiver:
         """Accept a pairing request and store the peer as a trusted device."""
         trusted = self._trusted_devices()
         now = int(time.time())
-        trusted, trust_mode = _accept_pair_record_standalone(trusted, peer_id, peer_host, fingerprint, now)
+        trusted, trust_mode = _accept_pair_record(trusted, peer_id, peer_host, fingerprint, now)
         self._write_trusted_devices(trusted)
         tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": True}}))
         self._log("KDE receiver paired with %s", peer_id)
@@ -1156,7 +1135,7 @@ class KDEckKdeReceiver:
         )
 
     def _identity_packet(self, target_device_id: Optional[str] = None, target_protocol_version: Any = None) -> dict[str, Any]:
-        return _identity_packet_standalone(
+        return _identity_packet_impl(
             self.device_id,
             tcp_port=self._tcp_port_value(),
             target_device_id=target_device_id,
@@ -1168,7 +1147,7 @@ class KDEckKdeReceiver:
         now = time.monotonic()
         cooldown = TRUSTED_PEER_CONNECT_COOLDOWN_SECONDS if self._trusted_devices().get(device_id) else PEER_CONNECT_COOLDOWN_SECONDS
         with self.data_lock:
-            allowed, key, skipped_event = _peer_connect_decision_standalone(
+            allowed, key, skipped_event = _peer_connect_decision(
                 device_id,
                 host,
                 port,
@@ -1184,10 +1163,10 @@ class KDEckKdeReceiver:
         return allowed
 
     def _identity_reply_ports(self, source_port: int, peer_identity: dict[str, Any]) -> list[int]:
-        return _identity_reply_ports_standalone(source_port, peer_identity)
+        return _identity_reply_ports_impl(source_port, peer_identity)
 
     def _peer_tls_mode(self, device_type: str) -> str:
-        return _peer_tls_mode_standalone(device_type)
+        return _peer_tls_mode_impl(device_type)
 
     def _device_id(self) -> str:
         if self.device_id_path.exists():
@@ -1199,7 +1178,7 @@ class KDEckKdeReceiver:
         return value
 
     def _ensure_certificate(self) -> None:
-        existing = _ensure_certificate_standalone(self.cert_path, self.key_path, self.device_id)
+        existing = _ensure_certificate_impl(self.cert_path, self.key_path, self.device_id)
         self.events.write_event("certificate_ready", {"cert": str(self.cert_path), "existing": existing})
 
     def _read_plain_packet(self, conn: socket.socket) -> dict[str, Any]:
@@ -1232,7 +1211,7 @@ class KDEckKdeReceiver:
         return self._decode_packet(data, context={"stage": "secure_identity"})
 
     def _encode_packet(self, packet: dict[str, Any]) -> bytes:
-        return _encode_packet_standalone(packet)
+        return _encode_packet_impl(packet)
 
     def _decode_packet(self, data: bytes, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         if len(data) > MAX_PACKET_BYTES:
@@ -1353,33 +1332,33 @@ class KDEckKdeReceiver:
                 self._log("KDE receiver file transfer failed after %d attempts: %s", 1 + PAYLOAD_RECEIVE_MAX_RETRIES, exc)
 
     def _safe_filename(self, filename: str) -> str:
-        return _safe_filename_standalone(filename)
+        return _safe_filename_impl(filename)
 
     def _unique_destination(self, filename: str) -> Path:
-        return _unique_destination_standalone(self.incoming_dir, filename)
+        return _unique_destination_impl(self.incoming_dir, filename)
 
     def _packet_payload_size(self, packet: dict[str, Any]) -> Optional[int]:
-        return _packet_payload_size_standalone(packet)
+        return _packet_payload_size_impl(packet)
 
     def _payload_port(self, transfer_info: dict[str, Any]) -> Optional[int]:
-        return _payload_port_standalone(transfer_info)
+        return _payload_port_impl(transfer_info)
 
     def _has_enough_space(self, payload_size: int) -> bool:
-        return _has_enough_space_standalone(self.incoming_dir, payload_size, MIN_FREE_SPACE_BYTES)
+        return _has_enough_space_impl(self.incoming_dir, payload_size, MIN_FREE_SPACE_BYTES)
 
     def _record_file_failure(self, peer_id: str, filename: str, reason: str, **details: Any) -> None:
-        _record_file_failure_standalone(
+        _record_file_failure_impl(
             self._set_diagnostic, self.events.write_event,
             peer_id, filename, reason, **details,
         )
 
     def _network_interfaces(self) -> list[dict[str, Any]]:
-        return _network_interfaces_standalone()
+        return _network_interfaces_impl()
 
     def _bind_available_tcp_port(self, server: socket.socket, port_low: int = None, port_mid: int = None) -> int:
         lo = port_low if port_low is not None else TCP_PORT_MIN
         hi = port_mid if port_mid is not None else TCP_PORT_MAX
-        return _bind_available_tcp_port_standalone(server, port_low=lo, port_mid=hi)
+        return _bind_available_tcp_port_impl(server, port_low=lo, port_mid=hi)
 
     def _wait_for_listener_state(self, timeout: float) -> None:
         deadline = time.monotonic() + timeout
@@ -1392,23 +1371,23 @@ class KDEckKdeReceiver:
             time.sleep(0.05)
 
     def _peer_fingerprint(self, tls: ssl.SSLSocket) -> Optional[str]:
-        return _peer_fingerprint_standalone(tls)
+        return _peer_fingerprint_impl(tls)
 
     def _is_trusted_device(self, peer_id: str, fingerprint: Optional[str]) -> bool:
-        return _is_trusted_device_standalone(self._trusted_devices(), peer_id, fingerprint)
+        return _is_trusted_device_impl(self._trusted_devices(), peer_id, fingerprint)
 
     def _broadcast_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str]]:
-        return _broadcast_targets_standalone(interfaces)
+        return _broadcast_targets_impl(interfaces)
 
     def _recent_discovery_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str, int]]:
         now = int(time.time())
         with self.state_lock:
             devices = list((self.diagnostics.get("discovered_devices") or {}).values())
-        return _recent_discovery_targets_standalone(devices, interfaces, now, self._source_ips_for_host)
+        return _recent_discovery_targets_impl(devices, interfaces, now, self._source_ips_for_host)
 
     def _trusted_direct_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str, int]]:
         now = int(time.time())
-        targets, events = _trusted_direct_targets_standalone(
+        targets, events = _trusted_direct_targets_impl(
             self._trusted_devices(),
             interfaces,
             now,
@@ -1434,22 +1413,22 @@ class KDEckKdeReceiver:
         first: list[tuple[Optional[str], str, int]],
         second: list[tuple[Optional[str], str, int]],
     ) -> list[tuple[Optional[str], str, int]]:
-        return _merge_direct_targets_standalone(first, second)
+        return _merge_direct_targets_impl(first, second)
 
     def _source_ips_for_host(self, host: str, interfaces: list[dict[str, Any]]) -> list[Optional[str]]:
-        return _source_ips_for_host_standalone(host, interfaces)
+        return _source_ips_for_host_impl(host, interfaces)
 
     def _is_ignored_interface(self, name: str) -> bool:
-        return _is_ignored_interface_standalone(name)
+        return _is_ignored_interface_impl(name)
 
     def _interface_path_type(self, name: str) -> str:
-        return _interface_path_type_standalone(name)
+        return _interface_path_type_impl(name)
 
     def _interface_priority(self, name: str) -> int:
-        return _interface_priority_standalone(name)
+        return _interface_priority_impl(name)
 
     def _is_usable_ipv4(self, address: Optional[str]) -> bool:
-        return _is_usable_ipv4_standalone(address)
+        return _is_usable_ipv4_impl(address)
 
     def _local_ipv4_addresses(self) -> set[str]:
         addresses = {"127.0.0.1"}
@@ -1503,7 +1482,7 @@ class KDEckKdeReceiver:
         trusted = self._trusted_devices()
         if not isinstance(trusted.get(device_id), dict):
             return
-        _remember_trusted_device_metadata_standalone(
+        _remember_trusted_device_metadata(
             trusted, device_id, host, identity, connected, udp_source_port,
         )
         self._write_trusted_devices(trusted)
@@ -1544,13 +1523,13 @@ class KDEckKdeReceiver:
         self.events.write_event("connection_state_changed", transition)
 
     def _trusted_devices(self) -> dict[str, Any]:
-        return _read_trusted_devices_standalone(self.trusted_path)
+        return _read_trusted_devices_impl(self.trusted_path)
 
     def _write_trusted_devices(self, data: dict[str, Any]) -> None:
         def _on_error(exc: OSError) -> None:
             self.events.write_event("trusted_devices_write_failed", {"error": str(exc)})
             self._log("KDE receiver trusted devices write failed: %s", exc)
-        _write_trusted_devices_standalone(self.trusted_path, data, on_error=_on_error)
+        _write_trusted_devices_impl(self.trusted_path, data, on_error=_on_error)
 
 
     def send_share_request_to_peer(
@@ -1913,7 +1892,7 @@ class KDEckKdeReceiver:
         return self._trusted_devices()
 
     def _connect_to_peer_control_socket(self, host: str, trusted_info: dict[str, Any], source_ips: list[Optional[str]]) -> Optional[socket.socket]:
-        return _connect_to_peer_control_socket_standalone(host, trusted_info, source_ips)
+        return _connect_to_peer_control_socket_impl(host, trusted_info, source_ips)
 
     def _log(self, message: str, *args: Any) -> None:
         if self.logger:

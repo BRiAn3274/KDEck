@@ -8,7 +8,7 @@
 - 仓库：`https://github.com/BRiAn3274/KDEck`
 - 许可证：BSD-3-Clause
 - 插件包：`release/KDEck.zip`
-- 本次验证 SHA256：`D50D68A9C7AE84EE7D7CA2FEA251C0E7740D9A56D4BBB88E08EA3C6A2C75795E`
+- 本次验证 SHA256：`12F10D9EA2BADF35084B896FF9E9AF97563138375C8546D49B4B3A022233DFC4`
 
 ## 发布前检查
 
@@ -25,7 +25,7 @@ python tools/package_release.py
 - 后端单元测试通过：`85 passed, 1 skipped`。
 - Python 编译检查通过。
 - 打包脚本通过，zip 内版本为 `0.9.6`。
-- 公开提交内容已扫描，不包含本机路径、固定内网 IP、私钥、证书、邮箱或 AI 署名。
+- 公开提交内容已扫描，不包含本机路径、固定内网 IP、私钥、证书、邮箱或个人敏感信息。
 
 ## 仓库结构
 

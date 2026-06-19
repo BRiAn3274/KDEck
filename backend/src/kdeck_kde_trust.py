@@ -1,10 +1,9 @@
 """KDEck KDE Connect trust management.
 
-Standalone helpers for reading / writing the trusted-devices store and
-checking whether a remote peer should be accepted.  The orchestrator
-(``KDEckKdeReceiver``) keeps thin wrapper methods that delegate here so
-that existing tests (``mock.patch.object(receiver, "_trusted_devices")``,
-etc.) keep working.
+The receiver owns connection state and event logging; this module owns the
+shape of the trusted-device store and the rules for accepting a peer.  Keeping
+those rules here makes migrations and trust checks testable without opening
+network sockets.
 """
 
 import json
