@@ -2,183 +2,133 @@
 
 English | [简体中文](README.zh-CN.md)
 
-KDEck is a Decky Loader plugin for Steam Deck game mode. It lets a KDE Connect device send clipboard text and files to the Steam Deck without switching to KDE Plasma desktop mode.
+KDEck is a Decky Loader plugin for Steam Deck game mode. It provides a focused KDE Connect-compatible bridge for clipboard text and file transfer, so paired phones or computers can exchange content with the Steam Deck without switching to Plasma desktop mode.
 
-Author: RainsListener  
+Author: RainsListener
+
 License: BSD-3-Clause
+
+Version: 0.9.6
 
 ## Features
 
-- Receive clipboard text from a phone and show it in a compact text field
-- Receive files from a phone and save them to the Steam Deck `Downloads` directory
-- Send files from the Steam Deck to a KDE Connect device: browse screenshots, recordings, logs, and save files with search, sorting, filtering, thumbnails, live progress, speed, and ETA
-- Send a redacted diagnostic bundle directly from the Logs page
-- Show the current Deck IP as a fallback for manual device entry in KDE Connect
-- Show the latest received file
-- Native on-screen keyboard support via `@decky/ui` TextField in both the QAM panel and the send-file route page
+- Receive KDE Connect clipboard text in the Decky quick access panel.
+- Receive shared files and save them to the Steam Deck `Downloads` directory.
+- Send screenshots, recordings, logs, save files, and redacted diagnostic bundles from the Deck to a paired KDE Connect device.
+- Browse sendable files in a Decky-style page with categories, search, sorting, thumbnails, online/offline device status, progress, speed, and ETA.
+- Pause the game-mode receiver while Plasma desktop mode is active, then resume when returning to game mode.
+- Keep a separate KDEck device identity, certificate, trusted-device store, and plugin data directory.
 
-KDEck focuses on clipboard text and file transfer in both directions. It does not implement notifications, SMS, remote input, media control, or the full KDE Connect desktop feature set.
-
-When Plasma desktop mode is active, KDEck pauses its game-mode receiver and releases the KDE Connect LAN discovery port. The receiver resumes after returning to game mode. This isolation is designed to avoid interfering with the official desktop-mode KDE Connect service.
+KDEck intentionally covers only clipboard text and file transfer. It does not implement KDE Connect notifications, SMS, remote input, media control, or other full desktop features.
 
 ## Installation
 
-1. Download `KDEck.zip` from GitHub Releases or CNB Releases.
+1. Download `KDEck.zip` from the project release package.
 2. Open Decky Loader on the Steam Deck.
 3. Import and install `KDEck.zip`.
-4. Open KDEck and confirm that it is receiving.
+4. Open KDEck from the Decky quick access menu and confirm that the receiver is running.
 
-If the plugin behaves unexpectedly after an overwrite install, restart the plugin in Decky Loader and open KDEck again.
+If an overwrite install behaves unexpectedly, restart KDEck from Decky Loader and open the panel again.
 
-## Pairing A Phone
+## Pairing
 
-1. Keep the phone and Steam Deck on the same Wi-Fi network or the same hotspot when possible.
-2. Open KDE Connect on the phone.
-3. Find `KDEck` in the device list and start pairing.
-4. After pairing, the phone can send clipboard text or files to KDEck.
+1. Keep the Steam Deck and the KDE Connect device on the same Wi-Fi network or hotspot.
+2. Open KDE Connect on the phone or computer.
+3. Find `KDEck` and start pairing.
+4. After pairing, send clipboard text or shared files to KDEck.
 
-If the phone cannot discover KDEck automatically, manually add the Deck IP shown in the KDEck panel. Campus networks, guest Wi-Fi, AP isolation, proxies, VPNs, and overlay networks can all affect automatic discovery.
+If automatic discovery fails, manually add the Deck IP shown in the KDEck panel. Guest Wi-Fi, AP isolation, VPNs, overlay networks, and multi-interface routing can affect KDE Connect discovery.
 
-KDEck keeps its own KDE Connect device identity, certificate, and trusted-device store. After an overwrite install or uninstall/reinstall, already paired phones or computers should normally keep working without unpairing first. To intentionally clear KDEck identity and pairings, use the hidden command `:kdeck reset identity`, then restart KDEck and pair again.
+KDEck keeps its own identity and trusted-device store. Overwrite installs should normally preserve existing pairings. To intentionally start over, enter `:kdeck reset identity` in the KDEck text field, restart KDEck, and pair again.
 
 ## Usage
 
-Send text:
+Receive clipboard text:
 
-1. Copy text on the phone.
-2. Open KDE Connect and choose KDEck.
-3. Use the clipboard sending action.
-4. The KDEck text field shows the latest received text.
+1. Send clipboard text from KDE Connect to `KDEck`.
+2. KDEck shows the latest received text in the panel.
 
-Send a file:
+Receive a file:
 
-1. Share a file from the phone.
-2. Choose KDE Connect.
-3. Choose KDEck.
-4. The file is saved to the Steam Deck `Downloads` directory.
+1. Share a file to KDE Connect.
+2. Choose `KDEck`.
+3. The file is saved to `/home/deck/Downloads`.
 
-Send a file from the Deck to a phone:
+Send a file from the Deck:
 
-1. Open the KDEck panel in the Decky sidebar.
-2. Choose "Send File" to open the file management page.
-3. Select a category (Screenshots / Recordings / Logs / Saves), then search, sort, or filter the list.
-4. Choose a target device if multiple are available, then select a file to send.
-5. KDEck shows the current transfer phase, sent bytes, speed, and estimated remaining time.
+1. Open KDEck in the Decky sidebar.
+2. Choose **Send File**.
+3. Select Screenshots, Recordings, Logs, or Saves.
+4. Choose a target device when more than one paired device is available.
+5. Select a file or diagnostic bundle to send.
 
-Send diagnostics:
+## Troubleshooting
 
-1. Open "Send File" and switch to the Logs page.
-2. Choose "Send Diagnostics".
-3. KDEck exports the redacted log bundle and sends the zip through the same tracked transfer flow.
+If the device cannot discover KDEck:
 
-## FAQ
+- Confirm both devices are on the same network or hotspot.
+- Disable AP isolation on the router if possible.
+- Try manual IP entry using the address shown in KDEck.
+- Remove old KDEck pairings from the KDE Connect device and pair again.
+- Restart KDEck from Decky Loader after an overwrite install.
 
-### The phone cannot find KDEck
-
-Check these first:
-
-- The Steam Deck and phone are on the same Wi-Fi network or hotspot
-- AP isolation is disabled on the network
-- KDE Connect on the phone does not still have an old KDEck pairing
-- KDEck is open and receiving
-- The manually added IP matches the Deck IP shown by KDEck
-
-### The phone says paired but content is not received
-
-Unpair KDEck in the phone KDE Connect app, then pair again. Older versions may leave incompatible pairing state on the phone.
-
-To reset from the KDEck side, enter `:kdeck reset identity` in the KDEck text field and press Enter. This removes KDEck's device ID, certificate, private key, trusted-device store, and preferred send target. Restart KDEck and pair devices again after using it.
-
-### Where are received files saved?
-
-By default:
+Received files are saved to:
 
 ```text
 /home/deck/Downloads
 ```
 
-This is the user's `Downloads` directory in Steam Deck desktop mode.
+Redacted diagnostics can be exported with hidden commands:
 
-## Current Status
+```text
+:kdeck status
+:kdeck devices
+:kdeck logs
+:kdeck export logs
+:kdeck reset identity
+```
 
-KDEck is under active development. Clipboard receive, file receive, and file send (screenshots, recordings, logs, saves) have been verified on real hardware with multiple phone models. Automatic discovery works on most home Wi-Fi networks; manual IP entry remains the fallback for restricted or multi-interface environments.
+The exported log package is designed for issue reports. It redacts sensitive paths, commands, fingerprints, clipboard content, private keys, and full device identifiers.
 
-KDEck uses its own device ID, certificate, and configuration directory. It does not register `org.kde.kdeconnect` and does not write to the desktop-mode KDE Connect pairing configuration.
+## SteamOS And KDE Connect Isolation
 
-## Attribution
+KDEck does not register `org.kde.kdeconnect` and does not write to the desktop-mode KDE Connect pairing configuration. It runs a separate game-mode receiver for the plugin.
 
-KDEck's design goal and protocol compatibility are based on the KDE Connect ecosystem. KDE Connect is a cross-device connectivity project developed by the KDE community:
+When Plasma desktop mode is detected, KDEck pauses its receiver and releases the KDE Connect LAN discovery port. Returning to game mode lets KDEck resume. This reduces conflicts with the official desktop-mode KDE Connect service.
 
-- Website: `https://kdeconnect.kde.org/`
-- Desktop repository: `https://invent.kde.org/network/kdeconnect-kde`
-- Android repository: `https://invent.kde.org/network/kdeconnect-android`
+## Root Flag
 
-KDEck is an independent project. It is not affiliated with KDE e.V. or the KDE Connect project, and it is not an official KDE release. KDEck implements only the minimal compatible receiver needed for bidirectional clipboard text and file transfer. It does not include KDE Connect source code or provide the full KDE Connect feature set.
+KDEck uses the Decky `_root` flag because the backend needs to inspect Decky/game-mode process state, bind KDE Connect LAN ports, and run a small number of commands in the `deck` user session. The plugin does not restart the system, modify system services, delete user downloads, or write to the desktop KDE Connect configuration.
 
 ## Development
 
-Source repositories:
+Repository:
 
 - GitHub: `https://github.com/BRiAn3274/KDEck`
-- CNB: `https://cnb.cool/RainsLIstener/KDEck`
 
-Local checks:
+Recommended checks:
 
 ```bash
-pnpm run build
+pnpm build
 python -m unittest discover -s tests
-python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py tools/package_release.py tools/kdeck_fake_client.py
-ruff check
+python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py backend/src/kdeck_kde_discovery.py backend/src/kdeck_kde_events.py backend/src/kdeck_kde_state.py backend/src/kdeck_kde_connection.py backend/src/kdeck_kde_network.py backend/src/kdeck_kde_protocol.py backend/src/kdeck_kde_tls.py backend/src/kdeck_kde_trust.py backend/src/kdeck_kde_trust_migration.py backend/src/kdeck_kde_transfer.py tools/package_release.py tools/kdeck_fake_client.py
 python tools/package_release.py
 ```
 
-Development fake client:
+On Windows, `tools/verify-release.ps1` runs the release verification flow and prints the package SHA256.
 
-```bash
-python tools/kdeck_fake_client.py discover --host 192.0.2.37
-python tools/kdeck_fake_client.py pair --host 192.0.2.37
-python tools/kdeck_fake_client.py clipboard --host 192.0.2.37 --pair --text "hello from pc"
-python tools/kdeck_fake_client.py send-file --host 192.0.2.37 --pair --file ./sample.txt
-python tools/kdeck_fake_client.py bad-packet --host 192.0.2.37 bad-body
-```
-
-This tool is only for development verification. It simulates a minimal KDE Connect desktop client and sends packets through the real UDP, TCP, and TLS protocol path. On first run it creates its own persistent `device-id` and self-signed certificate in the local user state directory. It does not read or write desktop KDE Connect configuration.
-
-If Windows is visible to KDEck but `discover` returns an empty array, Windows is probably blocking inbound UDP replies or routing them through a different interface. `pair`, `clipboard`, and `send-file` automatically scan KDEck TCP ports `1714-1764` as a fallback.
-
-Connection diagnostics:
-
-KDEck records whether the receiver is expected to run, whether it is paused by desktop mode, whether UDP/TCP listeners are active, the latest UDP discovery source, recent TCP success/failure, recent TLS success/failure, recent pair state, trusted-device reannounce targets, recent clipboard status, recent file status, send-job state, recent payload transfer errors, and connection-state transitions. Event logs include `event`, `stage`, `device_id`, and `time`; repeated high-frequency errors are rate limited, and sensitive path, command, and fingerprint fields are redacted. The exported log package includes redacted diagnostics in `manifest.json` and `status-snapshot.json`, making it easier to identify whether a problem is in discovery, connection, TLS, pairing, or file transfer.
-
-Hidden developer commands:
-
-```text
-:kdeck help
-:kdeck status
-:kdeck devices
-:kdeck reannounce
-:kdeck export logs
-:kdeck logs
-:kdeck share logs
-:kdeck reset identity
-:kdeck update <https-url> <sha256>
-```
-
-Enter one command in the KDEck clipboard text field and press Enter, or double-click the "Sync Text" button. These commands are intentionally hidden so normal users still see the field as a simple clipboard display, while testers can use it as a small diagnostic console. The command text is not saved as clipboard content.
-
-- `:kdeck help` lists available hidden commands.
-- `:kdeck status` shows the receiver diagnostic summary.
-- `:kdeck devices` shows discovered and trusted device counts.
-- `:kdeck reannounce` sends an immediate trusted-device reannounce.
-- `:kdeck logs` and `:kdeck export logs` export a redacted log package to the Steam Deck `Downloads` directory.
-- `:kdeck share logs` also exports logs, but does not directly send them back to a phone or computer. KDEck is an isolated receiver and does not keep a reliable reverse-send session; using desktop KDE Connect for this would reintroduce the desktop service dependency KDEck avoids.
-- `:kdeck reset identity` clears KDEck's managed KDE Connect identity, certificate, trusted-device store, and preferred send target. Use it only when you want to pair from scratch.
-- `:kdeck update <https-url> <sha256>` downloads and installs a development update package. The URL must use HTTPS and the SHA256 checksum must match the downloaded zip.
-
-The log package can be attached to a GitHub issue. Bug report and test report templates are available in the repository.
-
-The generated plugin package is:
+The generated package is:
 
 ```text
 release/KDEck.zip
 ```
+
+## Attribution
+
+KDEck is an independent project inspired by the KDE Connect ecosystem. It is not affiliated with KDE e.V. or the KDE Connect project, does not bundle KDE Connect source code, and implements only the compatibility needed for clipboard text and file transfer.
+
+Useful references:
+
+- `https://kdeconnect.kde.org/`
+- `https://invent.kde.org/network/kdeconnect-kde`
+- `https://invent.kde.org/network/kdeconnect-android`

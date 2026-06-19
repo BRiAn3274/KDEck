@@ -1,89 +1,130 @@
-# Decky 插件商店提交清单
+# Decky 插件商店提交材料
 
-KDEck 提交 Decky 插件商店前，按下面顺序检查。
+本文档用于准备 KDEck 向 `SteamDeckHomebrew/decky-plugin-database` 提交 PR。Decky 插件商店不是直接上传 zip，而是在插件数据库仓库中把本仓库作为 submodule 加到 `plugins/KDEck`。
 
-## 仓库结构
+## 当前提交版本
 
-- `main.py` 保留在仓库根目录，作为 Decky Python 后端入口。
-- 后端模块放在 `backend/src`。
-- 前端源码放在 `src`。
-- 构建产物 `dist/` 不提交到源码仓库。
-- 手动安装包 `release/KDEck.zip` 不提交到源码仓库。
+- KDEck 版本：`0.9.6`
+- 仓库：`https://github.com/BRiAn3274/KDEck`
+- 许可证：BSD-3-Clause
+- 插件包：`release/KDEck.zip`
+- 本次验证 SHA256：`D50D68A9C7AE84EE7D7CA2FEA251C0E7740D9A56D4BBB88E08EA3C6A2C75795E`
 
-## 本地验证
+## 发布前检查
 
 ```bash
-pnpm run build
+pnpm build
 python -m unittest discover -s tests
-python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py tools/package_release.py tools/kdeck_fake_client.py
-ruff check
+python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_receiver.py backend/src/kdeck_kde_discovery.py backend/src/kdeck_kde_events.py backend/src/kdeck_kde_state.py backend/src/kdeck_kde_connection.py backend/src/kdeck_kde_network.py backend/src/kdeck_kde_protocol.py backend/src/kdeck_kde_tls.py backend/src/kdeck_kde_trust.py backend/src/kdeck_kde_trust_migration.py backend/src/kdeck_kde_transfer.py tools/package_release.py tools/kdeck_fake_client.py
 python tools/package_release.py
 ```
 
-## 提交前检查
+已验证：
 
-- `package.json` 已按语义化版本更新。
-- `src/index.tsx` 中 `__KDECK_VERSION__` 由 rollup 从 `package.json` 注入，无需手动同步。
-- `CHANGELOG.md` 和 `CHANGELOG.zh-CN.md` 已记录本次改动。
-- `plugin.json` 的 `publish.description`、`publish.tags`、`publish.image` 可用。
-- `LICENSE` 存在。
-- `README.md` 默认为英文主页，`README.zh-CN.md` 提供中文说明。
-- `release/KDEck.zip` 可以手动导入 Decky Loader。
+- 前端构建通过。
+- 后端单元测试通过：`85 passed, 1 skipped`。
+- Python 编译检查通过。
+- 打包脚本通过，zip 内版本为 `0.9.6`。
+- 公开提交内容已扫描，不包含本机路径、固定内网 IP、私钥、证书、邮箱或 AI 署名。
 
-## 审核说明
+## 仓库结构
 
-- KDEck 有 Python 后端，核心功能是游戏模式里的最小 KDE Connect 兼容接收端，同时支持从 Deck 发送文件到手机。
-- KDEck 接收手机发送到 Deck 的剪贴板文本和文件，也可以把 Deck 上的截图、录像、日志发送到手机。不提供通知、短信、远程输入、媒体控制等完整 KDE Connect 功能。
-- KDEck 使用独立设备 ID、证书和配置目录，不注册 `org.kde.kdeconnect`，不写入桌面模式 KDE Connect 的配对配置。
-- 进入 Plasma 桌面模式时，KDEck 会暂停 receiver 并释放 KDE Connect LAN discovery 端口；回到游戏模式后自动恢复。
-- KDEck 的协议兼容性来自 KDE Connect 生态，但 KDEck 是独立项目，不隶属于 KDE e.V. 或 KDE Connect 项目，也不包含 KDE Connect 源码。
-- `_root` flag 用于在 Decky 后端环境中检测进程、绑定 KDE Connect LAN 端口，并在需要调用系统工具时降权到 `deck` 用户会话；卸载时只停止 KDEck 自己记录并带有 `KDECK_MANAGED_DAEMON=1` 标记的进程。
-- KDEck 不会删除用户下载目录，不会重启系统，不会修改系统服务。
-- 第三方运行时依赖说明见 `THIRD_PARTY_NOTICES.md`。
+- `main.py`：Decky Python 后端入口。
+- `src/`：前端源码。
+- `backend/src/`：后端源码。
+- `tests/`：后端单元测试。
+- `tools/`：发布、验证和本地调试工具。
+- `assets/logo.png`：插件图标。
+- `README.md`、`README.zh-CN.md`：公开说明。
+- `CHANGELOG.md`、`CHANGELOG.zh-CN.md`：版本变更记录。
+- `THIRD_PARTY_NOTICES.md`：第三方依赖说明。
+- `PROJECT_STRUCTURE.zh-CN.md`：仓库结构和可再生成产物边界。
+- `REAL_DEVICE_VALIDATION_MATRIX.zh-CN.md`：实机验证矩阵。
 
-## 实机提交前验证
+不提交：
 
-- SteamOS Stable：安装后能加载插件。
-- SteamOS Stable：手机 KDE Connect 能发现 `KDEck` 并配对。
-- SteamOS Stable：手机发送剪贴板后，KDEck 文本框显示最新文本。
-- SteamOS Stable：手机发送文件后，文件保存到 `/home/deck/Downloads`。
-- SteamOS Stable：切到 Plasma 桌面模式后，KDEck receiver 暂停并释放 UDP `1716`。
-- SteamOS Stable：回到游戏模式后，KDEck receiver 自动恢复。
-- SteamOS Beta / Preview：如无法覆盖测试，在 PR 中如实填写未测试。
+- `release/`
+- `dist/`
+- `backups/`
+- `node_modules/`
+- `.pnpm-store/`
+- Python/ruff/test 缓存
+- 本地过程型方案文档
+
+## 插件范围
+
+KDEck 是一个 Steam Deck 游戏模式 Decky Loader 插件，提供最小 KDE Connect 兼容能力：
+
+- 接收 KDE Connect 剪贴板文本。
+- 接收 KDE Connect 分享文件并保存到 `/home/deck/Downloads`。
+- 从 Deck 向已配对 KDE Connect 设备发送截图、录像、日志、存档和脱敏诊断包。
+- 显示发送进度、速率、预计剩余时间和设备在线/离线状态。
+
+不提供：
+
+- 通知同步
+- 短信
+- 远程输入
+- 媒体控制
+- 完整 KDE Connect 桌面功能
+
+## 隔离与权限说明
+
+- KDEck 使用独立设备 ID、证书和插件数据目录。
+- 不注册 `org.kde.kdeconnect`。
+- 不写入桌面模式 KDE Connect 配对配置。
+- 进入 Plasma 桌面模式时暂停 receiver 并释放 KDE Connect LAN discovery 端口。
+- 回到游戏模式后自动恢复 receiver。
+- `_root` flag 用于 Decky 后端进程状态检测、KDE Connect LAN 端口绑定和必要的 `deck` 用户会话命令。
+- 插件不会重启系统、修改系统服务、删除用户下载目录或写入桌面 KDE Connect 配置。
+
+## 实机验证摘要
+
+- 覆盖安装后插件可加载，版本号正确。
+- KDEck 可被 Windows KDE Connect 识别，并保持已配对状态。
+- Deck 发文件到 Windows PC 成功。
+- 手机/电脑文件接收和发送页基础流程已按 `REAL_DEVICE_VALIDATION_MATRIX.zh-CN.md` 验证。
+- 诊断包导出包含 `manifest.json`、`status-snapshot.json` 和 receiver 事件日志，并进行敏感字段脱敏。
+
+## Decky 插件数据库 PR 要点
+
+1. Fork `SteamDeckHomebrew/decky-plugin-database`。
+2. 新建分支，例如 `add/kdeck`。
+3. 将本仓库作为 submodule 加到 `plugins/KDEck`。
+4. 确认 `.gitmodules` 和 `plugins/KDEck` 都进入提交。
+5. PR 描述中说明功能范围、root 用途、隔离策略、实机验证和已知限制。
+
+参考：
+
+- `https://github.com/SteamDeckHomebrew/decky-plugin-database`
+- `https://wiki.deckbrew.xyz/en/plugin-dev/submitting-plugins`
+- `https://wiki.deckbrew.xyz/plugin-dev/review-and-testing`
 
 ## PR 描述草稿
 
 ```text
-KDEck is a Decky Loader plugin for Steam Deck game mode. It provides a minimal KDE Connect-compatible receiver so a phone can send clipboard text into the Decky panel and files into /home/deck/Downloads.
+KDEck is a Decky Loader plugin for Steam Deck game mode. It provides a focused KDE Connect-compatible bridge for clipboard text and file transfer.
 
 Scope:
-- Receives KDE Connect clipboard text from a phone.
-- Receives KDE Connect shared files from a phone.
-- Sends screenshots, recordings, and log files from the Deck to a paired phone.
+- Receives KDE Connect clipboard text.
+- Receives KDE Connect shared files into /home/deck/Downloads.
+- Sends screenshots, recordings, logs, save files, and redacted diagnostic bundles from the Deck to paired KDE Connect devices.
 - Does not provide notifications, SMS, remote input, media control, or the full KDE Connect desktop feature set.
 
 Isolation:
-- Uses a separate KDEck device ID, certificate, and plugin data directory.
+- Uses a separate KDEck device ID, certificate, trusted-device store, and plugin data directory.
 - Does not register org.kde.kdeconnect.
-- Does not write to the desktop KDE Connect pairing configuration.
-- Pauses its receiver in Plasma desktop mode and resumes in game mode.
+- Does not write to desktop-mode KDE Connect pairing configuration.
+- Pauses its game-mode receiver while Plasma desktop mode is active and resumes in game mode.
 
-Attribution:
-- Inspired by and compatible with a small part of the KDE Connect ecosystem.
-- Independent project; not affiliated with KDE e.V. or the KDE Connect project.
-- Does not bundle KDE Connect source code.
+Root usage:
+- Required for Decky backend process-state checks, KDE Connect LAN port binding, and controlled deck-user session commands.
+- Does not restart the system, modify system services, delete user downloads, or write to desktop KDE Connect configuration.
 
-Backend:
-- Python backend.
-- Uses root flag for Decky backend process inspection, LAN port binding, and controlled deck-user command execution where needed.
-- Does not modify system services, reboot the system, or delete user downloads.
+Validation:
+- pnpm build passed.
+- Python unit tests passed: 85 passed, 1 skipped.
+- Python compile check passed.
+- Release package generated and version checked as 0.9.6.
+- Real-device validation performed for pairing, file send, file receive, diagnostics, and desktop-mode pause/resume paths.
 ```
-
-## 插件数据库 PR
-
-Decky 插件商店不是直接上传 zip，而是向 `SteamDeckHomebrew/decky-plugin-database` 提交 PR，将本仓库作为 submodule 加到 `plugins/KDEck`。
-
-参考：
-
-- `https://github.com/SteamDeckHomebrew/decky-plugin-template`
-- `https://github.com/SteamDeckHomebrew/decky-plugin-database`

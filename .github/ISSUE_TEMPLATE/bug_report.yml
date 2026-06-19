@@ -7,7 +7,7 @@ body:
     id: kdeck_version
     attributes:
       label: KDEck version
-      placeholder: "0.4.2"
+      placeholder: "0.9.6"
     validations:
       required: true
   - type: dropdown
