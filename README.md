@@ -2,7 +2,15 @@
 
 English | [简体中文](README.zh-CN.md)
 
-KDEck is a Decky Loader plugin for Steam Deck game mode. It provides a focused KDE Connect-compatible bridge for clipboard text and file transfer, so paired phones or computers can exchange content with the Steam Deck without switching to Plasma desktop mode.
+KDEck is a Decky Loader plugin for Steam Deck game mode.
+
+It implements a small KDE Connect-compatible receiver for two use cases:
+
+- clipboard text
+- file transfer
+
+KDEck is not a full KDE Connect replacement. It does not implement
+notifications, SMS, remote input, media control, or desktop integration.
 
 Author: RainsListener
 
@@ -10,75 +18,71 @@ License: BSD-3-Clause
 
 Version: 0.9.6
 
-## Features
+## Supported Functions
 
-- Receive KDE Connect clipboard text in the Decky quick access panel.
-- Receive shared files and save them to the Steam Deck `Downloads` directory.
-- Send screenshots, recordings, logs, save files, and redacted diagnostic bundles from the Deck to a paired KDE Connect device.
-- Browse sendable files in a Decky-style page with categories, search, sorting, thumbnails, online/offline device status, progress, speed, and ETA.
-- Pause the game-mode receiver while Plasma desktop mode is active, then resume when returning to game mode.
-- Keep a separate KDEck device identity, certificate, trusted-device store, and plugin data directory.
+- Receive clipboard text from a paired KDE Connect device.
+- Receive files shared from a paired KDE Connect device.
+- Save received files to `/home/deck/Downloads`.
+- Send screenshots, recordings, logs, save files, and diagnostic bundles from
+  the Steam Deck to a paired KDE Connect device.
+- Show target device status, file progress, transfer speed, and estimated
+  remaining time.
+- Pause the KDEck game-mode receiver when Plasma desktop mode is detected.
 
-KDEck intentionally covers only clipboard text and file transfer. It does not implement KDE Connect notifications, SMS, remote input, media control, or other full desktop features.
+## Limits
+
+- KDEck uses its own device ID, certificate, trusted-device store, and plugin
+  data directory.
+- KDEck does not register `org.kde.kdeconnect`.
+- KDEck does not write to the desktop-mode KDE Connect pairing configuration.
+- KDEck does not modify system services.
+- KDEck does not delete files from the user downloads directory.
+- KDEck only supports the KDE Connect behavior needed for clipboard text and
+  file transfer.
 
 ## Installation
 
-1. Download `KDEck.zip` from the project release package.
+1. Download `KDEck.zip` from the release package.
 2. Open Decky Loader on the Steam Deck.
 3. Import and install `KDEck.zip`.
-4. Open KDEck from the Decky quick access menu and confirm that the receiver is running.
+4. Open KDEck from the Decky quick access menu.
 
-If an overwrite install behaves unexpectedly, restart KDEck from Decky Loader and open the panel again.
+After an overwrite install, restart KDEck from Decky Loader if the panel shows
+stale state.
 
 ## Pairing
 
-1. Keep the Steam Deck and the KDE Connect device on the same Wi-Fi network or hotspot.
+1. Put the Steam Deck and the KDE Connect device on the same Wi-Fi network or
+   hotspot.
 2. Open KDE Connect on the phone or computer.
-3. Find `KDEck` and start pairing.
-4. After pairing, send clipboard text or shared files to KDEck.
+3. Select `KDEck`.
+4. Accept the pairing request.
 
-If automatic discovery fails, manually add the Deck IP shown in the KDEck panel. Guest Wi-Fi, AP isolation, VPNs, overlay networks, and multi-interface routing can affect KDE Connect discovery.
+If discovery does not work, manually add the Steam Deck IP address shown in the
+KDEck panel. Guest Wi-Fi, AP isolation, VPNs, overlay networks, and routing
+rules can prevent KDE Connect discovery.
 
-KDEck keeps its own identity and trusted-device store. Overwrite installs should normally preserve existing pairings. To intentionally start over, enter `:kdeck reset identity` in the KDEck text field, restart KDEck, and pair again.
+To reset KDEck identity and pairing data, enter this command in the KDEck text
+field and restart the plugin:
 
-## Usage
+```text
+:kdeck reset identity
+```
 
-Receive clipboard text:
+## File Locations
 
-1. Send clipboard text from KDE Connect to `KDEck`.
-2. KDEck shows the latest received text in the panel.
-
-Receive a file:
-
-1. Share a file to KDE Connect.
-2. Choose `KDEck`.
-3. The file is saved to `/home/deck/Downloads`.
-
-Send a file from the Deck:
-
-1. Open KDEck in the Decky sidebar.
-2. Choose **Send File**.
-3. Select Screenshots, Recordings, Logs, or Saves.
-4. Choose a target device when more than one paired device is available.
-5. Select a file or diagnostic bundle to send.
-
-## Troubleshooting
-
-If the device cannot discover KDEck:
-
-- Confirm both devices are on the same network or hotspot.
-- Disable AP isolation on the router if possible.
-- Try manual IP entry using the address shown in KDEck.
-- Remove old KDEck pairings from the KDE Connect device and pair again.
-- Restart KDEck from Decky Loader after an overwrite install.
-
-Received files are saved to:
+Received files:
 
 ```text
 /home/deck/Downloads
 ```
 
-Redacted diagnostics can be exported with hidden commands:
+Plugin data is stored in the Decky plugin data directory. KDEck keeps this data
+separate from desktop-mode KDE Connect.
+
+## Hidden Diagnostic Commands
+
+The panel text field accepts these diagnostic commands:
 
 ```text
 :kdeck status
@@ -88,25 +92,21 @@ Redacted diagnostics can be exported with hidden commands:
 :kdeck reset identity
 ```
 
-The exported log package is designed for issue reports. It redacts sensitive paths, commands, fingerprints, clipboard content, private keys, and full device identifiers.
-
-## SteamOS And KDE Connect Isolation
-
-KDEck does not register `org.kde.kdeconnect` and does not write to the desktop-mode KDE Connect pairing configuration. It runs a separate game-mode receiver for the plugin.
-
-When Plasma desktop mode is detected, KDEck pauses its receiver and releases the KDE Connect LAN discovery port. Returning to game mode lets KDEck resume. This reduces conflicts with the official desktop-mode KDE Connect service.
+Diagnostic exports are intended for issue reports. They redact sensitive paths,
+commands, fingerprints, clipboard content, private keys, and full device
+identifiers.
 
 ## Root Flag
 
-KDEck uses the Decky `_root` flag because the backend needs to inspect Decky/game-mode process state, bind KDE Connect LAN ports, and run a small number of commands in the `deck` user session. The plugin does not restart the system, modify system services, delete user downloads, or write to the desktop KDE Connect configuration.
+KDEck uses the Decky `_root` flag for backend process-state checks, managing the
+KDEck receiver process, and running limited commands in the `deck` user session.
 
-## Development
+The plugin does not restart the system, modify system services, delete user
+downloads, or write to the desktop-mode KDE Connect configuration.
 
-Repository:
+## Development Checks
 
-- GitHub: `https://github.com/BRiAn3274/KDEck`
-
-Recommended checks:
+Recommended local checks:
 
 ```bash
 pnpm build
@@ -115,19 +115,36 @@ python -m py_compile main.py backend/src/kdeck_backend.py backend/src/kdeck_kde_
 python tools/package_release.py
 ```
 
-On Windows, `tools/verify-release.ps1` runs the release verification flow and prints the package SHA256.
+On Windows, the release check can also be run with:
 
-The generated package is:
+```powershell
+tools/verify-release.ps1
+```
+
+The release package is generated at:
 
 ```text
 release/KDEck.zip
 ```
 
-## Attribution
+## Acknowledgements
 
-KDEck is an independent project inspired by the KDE Connect ecosystem. It is not affiliated with KDE e.V. or the KDE Connect project, does not bundle KDE Connect source code, and implements only the compatibility needed for clipboard text and file transfer.
+The send page layout and Decky-style interaction model were reviewed against
+other open-source Decky plugins, including:
 
-Useful references:
+- `https://github.com/chenx-dust/DeckyClash`
+- `https://github.com/jinzhongjia/decky-music`
+
+These projects were used as UI references. KDEck does not include their source
+code.
+
+## Project Notes
+
+KDEck is an independent project that interoperates with a limited part of the
+KDE Connect protocol. It is not affiliated with KDE e.V. or the KDE Connect
+project and does not bundle KDE Connect source code.
+
+References:
 
 - `https://kdeconnect.kde.org/`
 - `https://invent.kde.org/network/kdeconnect-kde`
