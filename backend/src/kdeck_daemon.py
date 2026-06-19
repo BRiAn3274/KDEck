@@ -94,6 +94,30 @@ class KDEckDaemon:
     async def stop_daemon(self) -> dict[str, Any]:
         return await self.stop_managed_daemon()
 
+    def stop_user_daemons_sync(self, reason: str = "manual") -> dict[str, Any]:
+        """Stop deck-user kdeconnectd processes before KDEck owns the KDE Connect ports."""
+        pids = self._user_kdeconnectd_pids()
+        if not pids:
+            return {"ok": True, "state": "no_user_daemon", "reason": reason, "pids": []}
+        stopped: list[int] = []
+        failed: list[dict[str, Any]] = []
+        for pid in pids:
+            try:
+                result = subprocess.run(["kill", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=5, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                failed.append({"pid": pid, "error": str(exc)})
+                continue
+            if result.returncode in (0, 1):
+                stopped.append(pid)
+            else:
+                failed.append({"pid": pid, "returncode": result.returncode, "stderr": (result.stderr or "").strip()})
+        self._remove_file(self.daemon_pid_path)
+        if failed:
+            return {"ok": False, "state": "user_daemon_stop_failed", "reason": reason, "stopped": stopped, "failed": failed}
+        if self.logger:
+            self.logger.info("KDEck stopped kdeconnectd before managed receiver start: %s", stopped)
+        return {"ok": True, "state": "user_daemon_stopped", "reason": reason, "stopped": stopped}
+
     async def stop_managed_daemon(self) -> dict[str, Any]:
         pid = self._read_managed_daemon_pid()
         if not pid:
@@ -106,6 +130,47 @@ class KDEckDaemon:
             return self._error("managed_daemon_stop_failed", "Failed to stop the managed kdeconnectd.", command=result.to_dict())
         self._remove_file(self.daemon_pid_path)
         return {"ok": True, "state": "managed_daemon_stopped", "pid": pid, "command": result.to_dict()}
+
+    def stop_managed_daemon_sync(self) -> dict[str, Any]:
+        pid = self._read_managed_daemon_pid()
+        if not pid:
+            return {"ok": True, "state": "no_managed_daemon"}
+        if not self._is_managed_kdeconnectd_pid(pid):
+            self._remove_file(self.daemon_pid_path)
+            return {"ok": True, "state": "managed_daemon_not_owned", "pid": pid}
+        try:
+            subprocess.run(["kill", str(pid)], timeout=5, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return self._error("managed_daemon_stop_failed", "Failed to stop the managed kdeconnectd.")
+        self._remove_file(self.daemon_pid_path)
+        return {"ok": True, "state": "managed_daemon_stopped", "pid": pid}
+
+    def _managed_kdeconnectd_pids(self) -> list[int]:
+        pids: list[int] = []
+        pid = self._read_managed_daemon_pid()
+        if pid and self._is_managed_kdeconnectd_pid(pid):
+            pids.append(pid)
+        return pids
+
+    def _user_kdeconnectd_pids(self) -> list[int]:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-u", config.deck_user(), "-x", "kdeconnectd"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        pids: list[int] = []
+        for line in result.stdout.splitlines():
+            try:
+                pids.append(int(line.strip()))
+            except ValueError:
+                continue
+        return pids
 
     async def restart_daemon(self) -> dict[str, Any]:
         stop = await self.stop_daemon()
@@ -123,16 +188,18 @@ class KDEckDaemon:
         try:
             self.daemon_log_path.parent.mkdir(parents=True, exist_ok=True)
             log_file = self.daemon_log_path.open("ab")
-            proc = subprocess.Popen(
-                actual_command,
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                env=env,
-                start_new_session=True,
-                close_fds=True,
-            )
-            log_file.close()
+            try:
+                proc = subprocess.Popen(
+                    actual_command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+            finally:
+                log_file.close()
         except OSError as exc:
             return {
                 "ok": False,

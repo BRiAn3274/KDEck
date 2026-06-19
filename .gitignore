@@ -12,17 +12,20 @@ pids
 logs
 results
 tmp
+backups/
 
 # Coverage reports
 coverage
+.pytest_cache/
+.ruff_cache/
 
 # API keys and secrets
 .env
 
 # Dependency directory
-node_modules
+node_modules/
 bower_components
-.pnpm-store
+.pnpm-store/
 
 # Editors
 .idea
@@ -36,11 +39,20 @@ Thumbs.db
 dist/
 
 __pycache__/
+*.py[cod]
 
 /.yalc
 yalc.lock
 
 .vscode/settings.json
+
+# Local screenshots and chat/image cache exports
+*.tmp
+*.bak
+QQ*.png
+QQ*.jpg
+QQ*.jpeg
+QQ*.webp
 
 # Ignore output folder
 
@@ -58,3 +70,4 @@ cli/decky
 
 # Release packages
 release/
+KDEck-v*.zip

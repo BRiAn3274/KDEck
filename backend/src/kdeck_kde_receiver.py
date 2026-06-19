@@ -1,8 +1,18 @@
-import hashlib
+"""KDEck KDE Connect receiver orchestration.
+
+This class owns the mutable runtime state for KDE Connect in Game Mode:
+listeners, sockets, TLS sessions, connection threads, diagnostics, and event
+logging.  Stateless protocol, network, discovery, trust, TLS, and transfer
+helpers live in sibling ``kdeck_kde_*`` modules so they can be tested without
+opening sockets or changing receiver lifecycle behavior.
+"""
+
 import ipaddress
 import json
 import os
+import queue
 import secrets
+import select
 import shutil
 import socket
 import ssl
@@ -12,94 +22,172 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-UDP_PORT = 1716
-TCP_PORT_MIN = 1714
-TCP_PORT_MAX = 1764
-PROTOCOL_VERSION = 8
-DEVICE_NAME = "KDEck"
-DEVICE_TYPE = "desktop"
-PACKET_IDENTITY = "kdeconnect.identity"
-PACKET_PAIR = "kdeconnect.pair"
-PACKET_CLIPBOARD = "kdeconnect.clipboard"
-PACKET_CLIPBOARD_CONNECT = "kdeconnect.clipboard.connect"
-PACKET_SHARE_REQUEST = "kdeconnect.share.request"
-CAPABILITIES = [
+from kdeck_diagnostics import diagnostic_error
+
+# Import connection-state helpers.  Socket and TLS operations stay in the
+# receiver; this module only makes small deterministic lifecycle decisions.
+from kdeck_kde_connection import peer_connect_decision as _peer_connect_decision_standalone
+
+# Import discovery helpers.  These helpers calculate target lists only; the
+# receiver remains responsible for socket I/O, event logging, and diagnostics.
+from kdeck_kde_discovery import (
+    recent_discovery_targets as _recent_discovery_targets_standalone,
+)
+from kdeck_kde_discovery import (
+    trusted_direct_targets as _trusted_direct_targets_standalone,
+)
+
+# Import event logger.
+from kdeck_kde_events import EventLogger
+
+# Import network utility functions from the network module.
+from kdeck_kde_network import (  # noqa: F401
+    bind_available_tcp_port as _bind_available_tcp_port_standalone,
+)
+from kdeck_kde_network import (
+    broadcast_targets as _broadcast_targets_standalone,
+)
+from kdeck_kde_network import (
+    identity_reply_ports as _identity_reply_ports_standalone,
+)
+from kdeck_kde_network import (
+    interface_path_type as _interface_path_type_standalone,
+)
+from kdeck_kde_network import (
+    interface_priority as _interface_priority_standalone,
+)
+from kdeck_kde_network import (
+    is_ignored_interface as _is_ignored_interface_standalone,
+)
+from kdeck_kde_network import (
+    is_usable_ipv4 as _is_usable_ipv4_standalone,
+)
+from kdeck_kde_network import (
+    merge_direct_targets as _merge_direct_targets_standalone,
+)
+from kdeck_kde_network import (
+    network_interfaces as _network_interfaces_standalone,
+)
+from kdeck_kde_network import (
+    peer_tls_mode as _peer_tls_mode_standalone,
+)
+from kdeck_kde_network import (
+    source_ips_for_host as _source_ips_for_host_standalone,
+)
+
+# Import protocol constants & packet codec from the protocol module.
+# Re-export at module level so tests that patch kdeck_kde_receiver.TCP_PORT_MIN
+# etc. continue to work.
+from kdeck_kde_protocol import (  # noqa: F401
+    ANDROID_DEVICE_TYPES,
+    BROADCAST_INTERVAL_SECONDS,
+    CAPABILITIES,
+    DEVICE_NAME,
+    DEVICE_TYPE,
+    EVENT_LOG_BACKUPS,
+    EVENT_LOG_MAX_BYTES,
+    FILE_CHUNK_BYTES,
+    FILE_RECV_TOTAL_TIMEOUT_SECONDS,
+    HEARTBEAT_INTERVAL_SECONDS,
+    MAX_FILE_BYTES,
+    MAX_PACKET_BYTES,
+    MIN_FREE_SPACE_BYTES,
     PACKET_CLIPBOARD,
     PACKET_CLIPBOARD_CONNECT,
+    PACKET_IDENTITY,
+    PACKET_PAIR,
+    PACKET_PING,
     PACKET_SHARE_REQUEST,
-]
-STARTUP_BROADCAST_DELAYS = (0, 1, 2, 5, 10, 15, 20, 25, 30)
-BROADCAST_INTERVAL_SECONDS = 20
-RECENT_DISCOVERY_DIRECT_SECONDS = 180
-TRUSTED_DEVICE_DIRECT_SECONDS = 7 * 24 * 60 * 60
-PEER_CONNECT_COOLDOWN_SECONDS = 30
-TRUSTED_PEER_CONNECT_COOLDOWN_SECONDS = 5
-MAX_PACKET_BYTES = 64 * 1024
-MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
-MIN_FREE_SPACE_BYTES = 64 * 1024 * 1024
-EVENT_LOG_MAX_BYTES = 2 * 1024 * 1024
-EVENT_LOG_BACKUPS = 3
-IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "mihomo", "clash")
+    PAYLOAD_RECEIVE_MAX_RETRIES,
+    PAYLOAD_RECEIVE_RETRY_DELAY,
+    PEER_CONNECT_COOLDOWN_SECONDS,
+    PROTOCOL_VERSION,
+    RECENT_DISCOVERY_DIRECT_SECONDS,
+    RECONNECT_BASE_DELAY,
+    RECONNECT_MAX_DELAY,
+    SOCKET_BUFFER_BYTES,
+    SEND_PROGRESS_MIN_BYTES,
+    SEND_PROGRESS_MIN_INTERVAL_SECONDS,
+    STARTUP_BROADCAST_DELAYS,
+    TCP_PORT_MAX,
+    TCP_PORT_MIN,
+    TRUSTED_DEVICE_DIRECT_SECONDS,
+    TRUSTED_PEER_CONNECT_COOLDOWN_SECONDS,
+    UDP_PORT,
+)
+from kdeck_kde_protocol import (
+    encode_packet as _encode_packet_standalone,
+)
+from kdeck_kde_protocol import (
+    identity_packet as _identity_packet_standalone,
+)
+from kdeck_kde_protocol import (
+    packet_payload_size as _packet_payload_size_standalone,
+)
+from kdeck_kde_protocol import (
+    payload_port as _payload_port_standalone,
+)
+from kdeck_kde_state import state_transition
+
+# Import TLS utilities.
+from kdeck_kde_tls import (  # noqa: F401
+    ensure_certificate as _ensure_certificate_standalone,
+)
+from kdeck_kde_tls import (
+    peer_fingerprint as _peer_fingerprint_standalone,
+)
+
+# Import file-transfer utilities.
+from kdeck_kde_transfer import (
+    connect_to_peer_control_socket as _connect_to_peer_control_socket_standalone,
+)
+from kdeck_kde_transfer import (
+    has_enough_space as _has_enough_space_standalone,
+)
+from kdeck_kde_transfer import (
+    record_file_failure as _record_file_failure_standalone,
+)
+from kdeck_kde_transfer import (
+    safe_filename as _safe_filename_standalone,
+)
+from kdeck_kde_transfer import (
+    unique_destination as _unique_destination_standalone,
+)
+
+# Import trust management helpers.
+from kdeck_kde_trust import (
+    accept_pair_record as _accept_pair_record_standalone,
+)
+from kdeck_kde_trust import (
+    is_trusted_device as _is_trusted_device_standalone,
+)
+from kdeck_kde_trust import (
+    read_trusted_devices as _read_trusted_devices_standalone,
+)
+from kdeck_kde_trust import (
+    remember_trusted_device_metadata as _remember_trusted_device_metadata_standalone,
+)
+from kdeck_kde_trust import (
+    write_trusted_devices as _write_trusted_devices_standalone,
+)
 
 # Bluetooth constants: use numeric fallbacks since PyBluez (which monkey-patches
 # socket.AF_BLUETOOTH / BTPROTO_RFCOMM via import bluetooth) may not be
 # available in Deckys embedded Python.
 BT_AF = getattr(socket, "AF_BLUETOOTH", None) or 31
 BT_BTPROTO = getattr(socket, "BTPROTO_RFCOMM", None) or 3
-ANDROID_DEVICE_TYPES = {"phone", "tablet"}
-
-
-def interface_path_type(name: str) -> str:
-    """Classify a network interface name into a path type."""
-    clean = (name or "").lower()
-    if clean.startswith(("wlan", "wl", "en", "eth")):
-        return "lan"
-    if clean.startswith("et_"):
-        return "easytier"
-    if clean.startswith("zt"):
-        return "zerotier"
-    if clean.startswith(("tailscale", "tailscale0")):
-        return "tailscale"
-    if clean.startswith(("tun", "tap", "ppp")):
-        return "vpn"
-    return "other"
-
-
-INTERFACE_PRIORITIES = {
-    "lan": 100,
-    "easytier": 80,
-    "zerotier": 70,
-    "tailscale": 60,
-    "vpn": 40,
-    "other": 10,
-}
-
-
-def interface_priority(name: str) -> int:
-    """Return a priority score for a network interface."""
-    return INTERFACE_PRIORITIES.get(interface_path_type(name), 10)
-
-
-def is_usable_ipv4(address: Optional[str]) -> bool:
-    """Return True if the IPv4 address is usable for KDE Connect discovery."""
-    if not address:
-        return False
-    try:
-        ip = ipaddress.ip_address(address)
-    except ValueError:
-        return False
-    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-        return False
-    return ip not in ipaddress.ip_network("198.18.0.0/15")
-
-
-def is_ignored_interface(name: str) -> bool:
-    """Return True if the interface should be excluded from KDE Connect."""
-    clean = (name or "").lower()
-    return clean.startswith(IGNORED_INTERFACE_PREFIXES)
 
 
 class KDEckKdeReceiver:
+    """Manages the KDE Connect protocol for a Steam Deck plugin.
+
+    Handles UDP discovery, TCP/TLS connection lifecycle, pairing/trust,
+    clipboard sync, and file transfer.  Stateless helpers (protocol codec,
+    network discovery, TLS certificate management) are delegated to the
+    ``kdeck_kde_protocol``, ``kdeck_kde_network``, and ``kdeck_kde_tls``
+    modules respectively.
+    """
+
     def __init__(
         self,
         state_dir: Path,
@@ -125,10 +213,13 @@ class KDEckKdeReceiver:
         self._bt_helper_proc: Optional[subprocess.Popen] = None
         self.tcp_port: Optional[int] = None
         self.peer_connect_attempts: dict[str, float] = {}
+        self.peer_connections: dict[str, dict[str, Any]] = {}
         self.state_lock = threading.Lock()
         self.data_lock = threading.Lock()
-        self.event_buffer: list[dict[str, Any]] = []
-        self.event_buffer_lock = threading.Lock()
+        self.on_file_received: Optional[Callable[[dict[str, Any]], None]] = None
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.device_id = self._device_id()
+        self.events = EventLogger(self.event_log_path, self._log, default_device_id=self.device_id)
         self.diagnostics: dict[str, Any] = {
             "udp_working": False,
             "tcp_working": False,
@@ -150,26 +241,28 @@ class KDEckKdeReceiver:
             "last_payload_error": None,
             "last_clipboard": None,
             "last_file": None,
+            "last_state_transition": None,
+            "connection_states": {},
             "interfaces": [],
             "discovered_devices": {},
         }
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.device_id = self._device_id()
 
     def start(self) -> dict[str, Any]:
+        """Initialise TLS certificates, spawn TCP/UDP/BT servers and start broadcasting."""
         if self.threads:
             return self.status()
         try:
             self._ensure_certificate()
         except Exception as exc:
             self._log("KDE receiver certificate init failed: %s", exc)
-            self._set_diagnostic("last_error", {"stage": "certificate", "message": str(exc), "time": int(time.time())})
-            self._write_event("certificate_init_failed", {"error": str(exc)})
+            self._set_diagnostic("last_error", diagnostic_error("certificate_init_failed", "certificate", str(exc)))
+            self.events.write_event("certificate_init_failed", {"error": str(exc)})
             return {"ok": False, "running": False, "error": {"code": "certificate_init_failed", "message": str(exc)}}
         self.stop_event.clear()
         with self.data_lock:
             self.tcp_port = None
-        self._write_event("receiver_starting", {"udp_port": UDP_PORT, "tcp_port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}"})
+        self._set_connection_state(self.device_id, "idle", "receiver_starting")
+        self.events.write_event("receiver_starting", {"udp_port": UDP_PORT, "tcp_port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}"})
         for name, target in (
             ("KDEckKdeTcpServer", self._tcp_server),
             ("KDEckKdeUdpServer", self._udp_server),
@@ -187,6 +280,7 @@ class KDEckKdeReceiver:
         return self.status()
 
     def stop(self) -> dict[str, Any]:
+        """Signal all threads to stop, close sockets, and flush the event log."""
         self.stop_event.set()
         for sock in (self.tcp_socket, self.udp_socket, self.bt_socket):
             try:
@@ -222,8 +316,15 @@ class KDEckKdeReceiver:
         self._set_diagnostic("udp_working", False)
         self._set_diagnostic("tcp_working", False)
         self._set_diagnostic("pending_pair", None)
-        self._flush_event_buffer()
-        self._write_event("receiver_stopped", {})
+        current_state = None
+        with self.state_lock:
+            current = (self.diagnostics.get("connection_states") or {}).get(self.device_id)
+            if isinstance(current, dict):
+                current_state = current.get("state")
+        if current_state != "paused_desktop":
+            self._set_connection_state(self.device_id, "idle", "receiver_stopped")
+        self.events.flush()
+        self.events.write_event("receiver_stopped", {})
         return {"ok": True, "running": False}
 
     def _tcp_port_value(self) -> Optional[int]:
@@ -240,15 +341,17 @@ class KDEckKdeReceiver:
         return thread
 
     def reannounce_trusted_devices(self, reason: str = "manual_trusted_reannounce") -> dict[str, Any]:
+        """Re-broadcast identity so trusted devices can reconnect."""
         with self.data_lock:
             port = self.tcp_port
         if not port:
-            self._write_event("trusted_reannounce_skipped", {"reason": reason, "skip_reason": "tcp_not_ready"})
+            self.events.write_event("trusted_reannounce_skipped", {"reason": reason, "skip_reason": "tcp_not_ready"})
             return {"ok": False, "reason": "tcp_not_ready"}
         self._broadcast_identity(reason=reason)
         return {"ok": True, "reason": reason}
 
     def status(self) -> dict[str, Any]:
+        """Return a full status snapshot for the frontend."""
         trusted = self._trusted_devices()
         valid_trusted = {
             device_id: data
@@ -257,6 +360,12 @@ class KDEckKdeReceiver:
         }
         with self.state_lock:
             diagnostics = json.loads(json.dumps(self.diagnostics, ensure_ascii=False))
+        with self.data_lock:
+            peer_connections = {
+                device_id: {"host": data.get("host")}
+                for device_id, data in self.peer_connections.items()
+                if isinstance(data, dict)
+            }
         discovered = list(diagnostics.get("discovered_devices", {}).values())
         discovered.sort(key=lambda item: item.get("last_seen", 0), reverse=True)
         running = bool(self.threads) and bool(diagnostics.get("udp_working")) and bool(diagnostics.get("tcp_working"))
@@ -277,6 +386,7 @@ class KDEckKdeReceiver:
             "current_ips": [item["address"] for item in diagnostics.get("interfaces", []) if item.get("address")],
             "interfaces": diagnostics.get("interfaces", []),
             "discovered_devices": discovered,
+            "peer_connections": peer_connections,
             "last_error": diagnostics.get("last_error"),
             "last_discovery_sent": diagnostics.get("last_discovery_sent"),
             "last_discovery_received": diagnostics.get("last_discovery_received"),
@@ -291,19 +401,22 @@ class KDEckKdeReceiver:
             "last_payload_error": diagnostics.get("last_payload_error"),
             "last_clipboard": diagnostics.get("last_clipboard"),
             "last_file": diagnostics.get("last_file"),
+            "last_state_transition": diagnostics.get("last_state_transition"),
+            "connection_states": diagnostics.get("connection_states", {}),
             "paired": bool(valid_trusted),
             "trusted_device": next((item for item in discovered if item.get("device_id") in valid_trusted), None),
             "trusted_devices": valid_trusted,
             "legacy_trusted_devices": [device_id for device_id in trusted if device_id not in valid_trusted],
-            "last_events": self._tail_events(20),
+            "last_events": self.events.tail(20),
         }
 
     def _bluetooth_server(self) -> None:
+        """Listen on RFCOMM for incoming Bluetooth connections."""
         bt_channel = 22
         helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kdeck_bt_helper.py")
 
         if not os.path.exists(helper) or shutil.which("sdptool") is None:
-            self._write_event("bluetooth_init_failed", {"error": "helper missing or sdptool not installed"})
+            self.events.write_event("bluetooth_init_failed", {"error": "helper missing or sdptool not installed"})
             self._set_diagnostic("bt_working", False)
             return
 
@@ -323,7 +436,7 @@ class KDEckKdeReceiver:
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             )
         except OSError as exc:
-            self._write_event("bluetooth_init_failed", {"error": f"helper spawn failed: {exc}"})
+            self.events.write_event("bluetooth_init_failed", {"error": f"helper spawn failed: {exc}"})
             self._set_diagnostic("bt_working", False)
             return
 
@@ -332,7 +445,7 @@ class KDEckKdeReceiver:
         # Read one line to confirm startup.
         line = helper_proc.stdout.readline() if helper_proc.stdout else ""
         if "BT listening" not in line:
-            self._write_event("bluetooth_init_failed", {"error": f"helper startup failed: {line.strip()}"})
+            self.events.write_event("bluetooth_init_failed", {"error": f"helper startup failed: {line.strip()}"})
             self._set_diagnostic("bt_working", False)
             try:
                 helper_proc.kill()
@@ -343,7 +456,7 @@ class KDEckKdeReceiver:
 
         self._set_diagnostic("bt_working", True)
         self._set_diagnostic("bt_error", None)
-        self._write_event("bluetooth_listening", {"channel": bt_channel})
+        self.events.write_event("bluetooth_listening", {"channel": bt_channel})
 
         # Accept connections on the local TCP bridge port.
         tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -365,37 +478,40 @@ class KDEckKdeReceiver:
             )
 
     def _handle_incoming_bt(self, conn: socket.socket, addr: str) -> None:
+        """Handle a single Bluetooth connection: read identity, upgrade to TLS, then enter packet loop."""
         bt_id = str(addr).replace(":", "")[:16]
         try:
-            self._write_event("incoming_bt_connected", {"addr": str(addr)})
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            self.events.write_event("incoming_bt_connected", {"addr": str(addr)})
             identity = self._read_plain_packet(conn)
             body = identity.get("body") or {}
             peer_id = body.get("deviceId")
             if identity.get("type") != PACKET_IDENTITY or not peer_id:
-                self._write_event("incoming_bt_identity_invalid", {"addr": str(addr), "packet_type": identity.get("type")})
+                self.events.write_event("incoming_bt_identity_invalid", {"addr": str(addr), "packet_type": identity.get("type")})
                 conn.close()
                 return
-            self._write_event("incoming_bt_identity_received", {"addr": str(addr), "device_id": peer_id, "device_name": body.get("deviceName")})
+            self.events.write_event("incoming_bt_identity_received", {"addr": str(addr), "device_id": peer_id, "device_name": body.get("deviceName")})
             # TLS: Bluetooth uses client-side TLS (same as incoming TCP)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
             context.load_cert_chain(str(self.cert_path), str(self.key_path))
-            self._write_event("incoming_bt_tls_start", {"addr": str(addr), "device_id": peer_id})
+            self.events.write_event("incoming_bt_tls_start", {"addr": str(addr), "device_id": peer_id})
             tls = context.wrap_socket(conn, server_hostname=peer_id, do_handshake_on_connect=True)
-            self._write_event("incoming_bt_tls_done", {"addr": str(addr), "device_id": peer_id})
+            self.events.write_event("incoming_bt_tls_done", {"addr": str(addr), "device_id": peer_id})
             self._after_tls(tls, peer_id, peer_host=bt_id, send_identity_first=True)
         except Exception as exc:
             self._log("KDE receiver BT connection failed from %s: %s", addr, exc)
             error = {"stage": "incoming_bt", "addr": str(addr), "error_type": type(exc).__name__, "message": str(exc), "time": int(time.time())}
             self._set_diagnostic("last_error", error)
-            self._write_event("incoming_bt_failed", error)
+            self.events.write_event("incoming_bt_failed", error)
             try:
                 conn.close()
             except OSError:
                 pass
 
     def _tcp_server(self) -> None:
+        """Bind a TCP socket and accept incoming KDE Connect connections."""
         try:
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -407,16 +523,22 @@ class KDEckKdeReceiver:
                 self.tcp_port = tcp_port
         except OSError as exc:
             self._log("KDE receiver TCP start failed: %s", exc)
-            hint = "KDE Connect 端口 {}-{} 全部被占用，请检查是否有其他 KDE Connect 实例在运行。".format(TCP_PORT_MIN, TCP_PORT_MAX)
-            error = {"message": str(exc), "time": int(time.time()), "port_range": f"{TCP_PORT_MIN}-{TCP_PORT_MAX}", "hint": hint}
+            hint = "KDE Connect ports {}-{} are all occupied, check for other KDE Connect instances.".format(TCP_PORT_MIN, TCP_PORT_MAX)
+            error = diagnostic_error(
+                "tcp_listener_bind_failed",
+                "tcp",
+                str(exc),
+                port_range=f"{TCP_PORT_MIN}-{TCP_PORT_MAX}",
+                hint=hint,
+            )
             self._set_diagnostic("tcp_working", False)
             self._set_diagnostic("tcp_error", error)
-            self._set_diagnostic("last_error", {"stage": "tcp_bind", **error})
-            self._write_event("tcp_bind_failed", error)
+            self._set_diagnostic("last_error", error)
+            self.events.write_event("tcp_bind_failed", error)
             return
         self._set_diagnostic("tcp_working", True)
         self._set_diagnostic("tcp_error", None)
-        self._write_event("tcp_listening", {"host": "0.0.0.0", "port": tcp_port})
+        self.events.write_event("tcp_listening", {"host": "0.0.0.0", "port": tcp_port})
 
         while not self.stop_event.is_set():
             try:
@@ -428,6 +550,7 @@ class KDEckKdeReceiver:
             self._start_connection_thread(lambda c=conn, a=addr: self._handle_incoming_tcp(c, a), f"KDEckTcpHandler-{addr[0]}:{addr[1]}")
 
     def _udp_server(self) -> None:
+        """Bind a UDP socket and process incoming discovery broadcasts."""
         try:
             udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -437,15 +560,15 @@ class KDEckKdeReceiver:
             self.udp_socket = udp
         except OSError as exc:
             self._log("KDE receiver UDP start failed: %s", exc)
-            error = {"message": str(exc), "time": int(time.time()), "port": UDP_PORT}
+            error = diagnostic_error("discovery_udp_bind_failed", "discovery", str(exc), port=UDP_PORT)
             self._set_diagnostic("udp_working", False)
             self._set_diagnostic("udp_error", error)
-            self._set_diagnostic("last_error", {"stage": "udp_bind", **error})
-            self._write_event("udp_bind_failed", error)
+            self._set_diagnostic("last_error", error)
+            self.events.write_event("udp_bind_failed", error)
             return
         self._set_diagnostic("udp_working", True)
         self._set_diagnostic("udp_error", None)
-        self._write_event("udp_listening", {"host": "0.0.0.0", "port": UDP_PORT})
+        self.events.write_event("udp_listening", {"host": "0.0.0.0", "port": UDP_PORT})
 
         while not self.stop_event.is_set():
             try:
@@ -463,7 +586,7 @@ class KDEckKdeReceiver:
             if not device_id or device_id == self.device_id or not (1714 <= tcp_port <= 1764):
                 continue
             if self._is_local_host(addr[0]):
-                self._write_event(
+                self.events.write_event(
                     "discovery_ignored",
                     {"host": addr[0], "device_id": device_id, "device_name": body.get("deviceName"), "reason": "local_host"},
                 )
@@ -488,6 +611,7 @@ class KDEckKdeReceiver:
                 )
 
     def _broadcast_loop(self) -> None:
+        """Periodically broadcast identity packets over UDP."""
         started_at = time.monotonic()
         for delay in STARTUP_BROADCAST_DELAYS:
             if self.stop_event.wait(max(0, started_at + delay - time.monotonic())):
@@ -501,6 +625,7 @@ class KDEckKdeReceiver:
             self._broadcast_identity(reason="interval")
 
     def _broadcast_identity(self, reason: str = "manual") -> None:
+        """Send a single identity broadcast to all reachable subnets."""
         tcp_port = self._tcp_port_value()
         packet = self._identity_packet()
         packet["body"]["tcpPort"] = tcp_port
@@ -549,7 +674,7 @@ class KDEckKdeReceiver:
         self._set_diagnostic("interfaces", interfaces)
         self._set_diagnostic("last_discovery_sent", {"time": int(time.time()), **details})
         self._set_diagnostic("last_reannounce_targets", {"time": int(time.time()), "reason": reason, "direct_targets": details["direct_targets"]})
-        self._write_event("discovery_sent", details)
+        self.events.write_event("discovery_sent", details)
 
     def _send_udp_identity(
         self,
@@ -563,7 +688,7 @@ class KDEckKdeReceiver:
     ) -> None:
         tcp_port = self._tcp_port_value()
         if not tcp_port:
-            self._write_event("identity_reply_skipped", {"host": host, "reason": "tcp_not_ready"})
+            self.events.write_event("identity_reply_skipped", {"host": host, "reason": "tcp_not_ready"})
             return
         packet = self._identity_packet(target_device_id=target_device_id, target_protocol_version=target_protocol_version)
         packet["body"]["tcpPort"] = tcp_port
@@ -585,7 +710,7 @@ class KDEckKdeReceiver:
                     sent_sources.append(source_ip)
             except OSError as exc:
                 failures.append({"source": source_ip, "target": host, "error": str(exc)})
-        self._write_event(
+        self.events.write_event(
             "identity_reply_sent",
             {
                 "host": host,
@@ -602,21 +727,25 @@ class KDEckKdeReceiver:
         )
 
     def _handle_incoming_tcp(self, conn: socket.socket, addr: tuple[str, int]) -> None:
+        """Process one incoming TCP connection: read plain identity, perform TLS handshake, then enter packet loop."""
+        peer_id = None
         try:
-            self._write_event("incoming_tcp_connected", {"host": addr[0], "port": addr[1]})
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            self.events.write_event("incoming_tcp_connected", {"host": addr[0], "port": addr[1]})
             self._set_diagnostic("last_tcp_success", {"host": addr[0], "port": addr[1], "stage": "incoming", "time": int(time.time())})
             if self._is_local_host(addr[0]):
-                self._write_event("incoming_tcp_rejected", {"host": addr[0], "port": addr[1], "reason": "local_host"})
+                self.events.write_event("incoming_tcp_rejected", {"host": addr[0], "port": addr[1], "reason": "local_host"})
                 conn.close()
                 return
             identity = self._read_plain_packet(conn)
             body = identity.get("body") or {}
             peer_id = body.get("deviceId")
             if identity.get("type") != PACKET_IDENTITY or not peer_id:
-                self._write_event("incoming_plain_identity_invalid", {"host": addr[0], "port": addr[1], "packet_type": identity.get("type")})
+                self.events.write_event("incoming_plain_identity_invalid", {"host": addr[0], "port": addr[1], "packet_type": identity.get("type")})
                 conn.close()
                 return
-            self._write_event(
+            self._set_connection_state(peer_id, "connecting", "incoming_plain_identity_received", host=addr[0], port=addr[1])
+            self.events.write_event(
                 "incoming_plain_identity_received",
                 {
                     "host": addr[0],
@@ -630,7 +759,7 @@ class KDEckKdeReceiver:
             )
             target = body.get("targetDeviceId")
             if target and target != self.device_id:
-                self._write_event("incoming_tcp_rejected", {"host": addr[0], "port": addr[1], "device_id": peer_id, "target_device_id": target})
+                self.events.write_event("incoming_tcp_rejected", {"host": addr[0], "port": addr[1], "device_id": peer_id, "target_device_id": target})
                 conn.close()
                 return
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -638,29 +767,42 @@ class KDEckKdeReceiver:
             context.verify_mode = ssl.CERT_NONE
             context.load_cert_chain(str(self.cert_path), str(self.key_path))
             tls_started = time.monotonic()
-            self._write_event("incoming_tls_handshake_start", {"host": addr[0], "port": addr[1], "device_id": peer_id, "tls_mode": "client"})
+            self.events.write_event("incoming_tls_handshake_start", {"host": addr[0], "port": addr[1], "device_id": peer_id, "tls_mode": "client"})
             tls = context.wrap_socket(conn, server_hostname=peer_id, do_handshake_on_connect=True)
             self._set_diagnostic("last_tls_success", {"host": addr[0], "port": addr[1], "device_id": peer_id, "stage": "incoming", "time": int(time.time())})
-            self._write_event(
+            self._set_connection_state(peer_id, "connected", "incoming_tls_ready", host=addr[0], port=addr[1])
+            self.events.write_event(
                 "incoming_tls_handshake_done",
                 {"host": addr[0], "port": addr[1], "device_id": peer_id, "tls_mode": "client", "duration_ms": int((time.monotonic() - tls_started) * 1000)},
             )
             self._after_tls(tls, peer_id, peer_host=addr[0], send_identity_first=True)
         except Exception as exc:
             self._log("KDE receiver incoming connection failed from %s: %s", addr, exc)
-            error = {"stage": "incoming_tcp", "host": addr[0], "port": addr[1], "error_type": type(exc).__name__, "message": str(exc), "time": int(time.time())}
+            error = diagnostic_error(
+                "tls_handshake_failed",
+                "tls",
+                str(exc),
+                host=addr[0],
+                port=addr[1],
+                error_type=type(exc).__name__,
+                direction="incoming",
+                device_id=peer_id,
+            )
             self._set_diagnostic("last_error", error)
             self._set_diagnostic("last_tls_error", error)
-            self._write_event("incoming_tcp_failed", error)
+            if error.get("device_id"):
+                self._set_connection_state(error["device_id"], "failed", "incoming_tls_failed", host=addr[0], port=addr[1])
+            self.events.write_event("incoming_tcp_failed", error)
             try:
                 conn.close()
             except OSError:
                 pass
 
-    def _connect_to_peer(self, host: str, port: int, peer_identity: dict[str, Any]) -> None:
+    def _connect_to_peer(self, host: str, port: int, peer_identity: dict[str, Any]) -> bool:
+        """Initiate an outgoing TCP+TLS connection to a discovered peer."""
         peer_id = peer_identity.get("deviceId")
         if not peer_id:
-            return
+            return False
         self._set_diagnostic(
             "last_connect_attempt",
             {
@@ -672,7 +814,8 @@ class KDEckKdeReceiver:
                 "time": int(time.time()),
             },
         )
-        self._write_event(
+        self._set_connection_state(peer_id, "connecting", "peer_connect_attempt", host=host, port=port)
+        self.events.write_event(
             "peer_connect_attempt",
             {
                 "host": host,
@@ -689,17 +832,20 @@ class KDEckKdeReceiver:
         device_type = str(peer_identity.get("deviceType") or "").lower()
         tls_mode = self._peer_tls_mode(device_type)
         use_tls_client = tls_mode == "client"
+        tls = None
+        raw = None
         try:
             tcp_started = time.monotonic()
             raw = socket.create_connection((host, port), timeout=5, source_address=(source_ip, 0) if source_ip else None)
+            raw.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             self._set_diagnostic("last_tcp_success", {"host": host, "port": port, "device_id": peer_id, "source_ip": source_ip, "time": int(time.time())})
-            self._write_event(
+            self.events.write_event(
                 "peer_tcp_connected",
                 {"host": host, "port": port, "device_id": peer_id, "source_ip": source_ip, "duration_ms": int((time.monotonic() - tcp_started) * 1000)},
             )
             hello = self._identity_packet(target_device_id=peer_id, target_protocol_version=peer_identity.get("protocolVersion"))
             raw.sendall(self._encode_packet(hello))
-            self._write_event(
+            self.events.write_event(
                 "peer_plain_identity_sent",
                 {
                     "host": host,
@@ -719,7 +865,7 @@ class KDEckKdeReceiver:
                 context.verify_mode = ssl.CERT_NONE
             context.load_cert_chain(str(self.cert_path), str(self.key_path))
             tls_started = time.monotonic()
-            self._write_event(
+            self.events.write_event(
                 "peer_tls_handshake_start",
                 {"host": host, "port": port, "device_id": peer_id, "source_ip": source_ip, "tls_mode": tls_mode, "device_type": device_type},
             )
@@ -730,7 +876,8 @@ class KDEckKdeReceiver:
                 do_handshake_on_connect=True,
             )
             self._set_diagnostic("last_tls_success", {"host": host, "port": port, "device_id": peer_id, "source_ip": source_ip, "tls_mode": tls_mode, "stage": "peer_connect", "time": int(time.time())})
-            self._write_event(
+            self._set_connection_state(peer_id, "connected", "peer_tls_ready", host=host, port=port, source_ip=source_ip)
+            self.events.write_event(
                 "peer_tls_handshake_done",
                 {
                     "host": host,
@@ -742,29 +889,43 @@ class KDEckKdeReceiver:
                 },
             )
             self._after_tls(tls, peer_id, peer_host=host, send_identity_first=True)
+            return True
         except Exception as exc:
             self._log("KDE receiver peer connection failed %s:%s: %s", host, port, exc)
-            error = {
-                "host": host,
-                "port": port,
-                "device_id": peer_id,
-                "device_type": peer_identity.get("deviceType"),
-                "source_ip": source_ip,
-                "tls_mode": tls_mode,
-                "error_type": type(exc).__name__,
-                "message": str(exc),
-                "time": int(time.time()),
-            }
+            code = "tcp_connect_timeout" if isinstance(exc, TimeoutError) else "tcp_connect_failed"
+            if isinstance(exc, ssl.SSLError):
+                code = "tls_handshake_failed"
+            error = diagnostic_error(
+                code,
+                "tls" if code == "tls_handshake_failed" else "tcp",
+                str(exc),
+                host=host,
+                port=port,
+                device_id=peer_id,
+                device_type=peer_identity.get("deviceType"),
+                source_ip=source_ip,
+                tls_mode=tls_mode,
+                error_type=type(exc).__name__,
+            )
             self._set_diagnostic("last_connect_error", error)
-            self._set_diagnostic("last_error", {"stage": "peer_connect", **error})
-            self._set_diagnostic("last_tls_error", error)
-            self._write_event("peer_connect_failed", error)
+            self._set_diagnostic("last_error", error)
+            if code == "tls_handshake_failed":
+                self._set_diagnostic("last_tls_error", error)
+            self._set_connection_state(peer_id, "failed", code, host=host, port=port)
+            self.events.write_event("peer_connect_failed", error)
+            try:
+                if tls is not None:
+                    tls.close()
+                elif raw is not None:
+                    raw.close()
+            except Exception:
+                pass
             if device_type in ANDROID_DEVICE_TYPES:
-                self._write_event(
+                self.events.write_event(
                     "identity_reply_skipped",
                     {"host": host, "port": UDP_PORT, "target_device_id": peer_id, "reason": "android_failure_fallback_suppressed"},
                 )
-                return
+                return False
             self._send_udp_identity(
                 host,
                 UDP_PORT,
@@ -773,74 +934,154 @@ class KDEckKdeReceiver:
                 reason="peer_connect_failed_fallback",
                 peer_identity=peer_identity,
             )
+            return False
 
     def _after_tls(self, tls: ssl.SSLSocket, peer_id: str, peer_host: str, send_identity_first: bool) -> None:
-        tls.settimeout(60)
-        fingerprint = self._peer_fingerprint(tls)
-        if send_identity_first:
-            tls.sendall(self._encode_packet(self._identity_packet()))
-            self._write_event("secure_identity_sent", {"host": peer_host, "device_id": peer_id})
-        secure_identity = self._read_tls_packet(tls)
-        if secure_identity.get("type") == PACKET_IDENTITY:
-            secure_body = secure_identity.get("body") or {}
-            peer_id = secure_body.get("deviceId") or peer_id
-            self._remember_trusted_device_metadata(peer_id, peer_host, secure_body, connected=True)
-            self._write_event(
-                "secure_identity_received",
-                {
-                    "host": peer_host,
-                    "device_id": peer_id,
-                    "device_name": secure_body.get("deviceName"),
-                    "device_type": secure_body.get("deviceType"),
-                    "protocol_version": secure_body.get("protocolVersion"),
-                    "tcp_port": secure_body.get("tcpPort"),
-                },
-            )
-        else:
-            self._write_event("secure_identity_missing", {"host": peer_host, "device_id": peer_id, "packet_type": secure_identity.get("type")})
-        self._packet_loop(tls, peer_id, peer_host, fingerprint)
-
-    def _packet_loop(self, tls: ssl.SSLSocket, peer_id: str, peer_host: str, fingerprint: Optional[str]) -> None:
-        buffer = b""
-        while not self.stop_event.is_set():
-            try:
-                chunk = tls.recv(65536)
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-            if not chunk:
-                break
-            buffer += chunk
-            if len(buffer) > MAX_PACKET_BYTES and b"\n" not in buffer:
-                self._write_event(
-                    "packet_rejected",
+        """Post-TLS handshake: exchange secure identities and enter the packet loop or reconnect loop."""
+        try:
+            tls.settimeout(60)
+            fingerprint = self._peer_fingerprint(tls)
+            if send_identity_first:
+                tls.sendall(self._encode_packet(self._identity_packet()))
+                self.events.write_event("secure_identity_sent", {"host": peer_host, "device_id": peer_id})
+            secure_identity = self._read_tls_packet(tls)
+            if secure_identity.get("type") == PACKET_IDENTITY:
+                secure_body = secure_identity.get("body") or {}
+                peer_id = secure_body.get("deviceId") or peer_id
+                self._remember_trusted_device_metadata(peer_id, peer_host, secure_body, connected=True)
+                self.events.write_event(
+                    "secure_identity_received",
                     {
-                        "device_id": peer_id,
                         "host": peer_host,
-                        "reason": "packet_too_large",
-                        "size": len(buffer),
-                        "max_size": MAX_PACKET_BYTES,
+                        "device_id": peer_id,
+                        "device_name": secure_body.get("deviceName"),
+                        "device_type": secure_body.get("deviceType"),
+                        "protocol_version": secure_body.get("protocolVersion"),
+                        "tcp_port": secure_body.get("tcpPort"),
                     },
                 )
-                buffer = b""
-                continue
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                if len(line) + 1 > MAX_PACKET_BYTES:
-                    self._write_event(
-                        "packet_rejected",
-                        {
-                            "device_id": peer_id,
-                            "host": peer_host,
-                            "reason": "packet_too_large",
-                            "size": len(line) + 1,
-                            "max_size": MAX_PACKET_BYTES,
-                        },
-                    )
-                    continue
-                packet = self._decode_packet(line + b"\n", context={"stage": "tls_packet", "device_id": peer_id, "host": peer_host})
-                self._handle_packet(tls, peer_id, peer_host, packet, fingerprint)
+            else:
+                self.events.write_event("secure_identity_missing", {"host": peer_host, "device_id": peer_id, "packet_type": secure_identity.get("type")})
+            self._packet_loop(tls, peer_id, peer_host, fingerprint)
+        except Exception as exc:
+            self.events.write_event("peer_session_error", {"host": peer_host, "device_id": peer_id, "error_type": type(exc).__name__, "message": str(exc)})
+            self._log("KDE receiver session error %s: %s", peer_id, exc)
+        finally:
+            try:
+                tls.close()
+            except Exception:
+                pass
+            # Active reconnect for trusted devices
+            if not self.stop_event.is_set() and self._trusted_devices().get(peer_id):
+                t = threading.Thread(
+                    target=self._active_reconnect_loop,
+                    args=(peer_id, peer_host),
+                    name=f"KDEckReconnect-{peer_id[:8]}",
+                    daemon=True,
+                )
+                t.start()
+                self.threads.append(t)
+
+    def _active_reconnect_loop(self, peer_id: str, last_host: str) -> None:
+        """Immediately try to reconnect to a trusted device that just disconnected."""
+        delay = RECONNECT_BASE_DELAY
+        attempt = 0
+        while not self.stop_event.is_set():
+            self.stop_event.wait(delay)
+            if self.stop_event.is_set():
+                return
+            # Skip if already reconnected
+            with self.data_lock:
+                if peer_id in self.peer_connections:
+                    return
+            self._set_connection_state(peer_id, "backoff", "reconnect_wait", host=last_host, delay=delay, attempt=attempt)
+            self.events.write_event("reconnect_attempt", {"device_id": peer_id, "host": last_host, "delay": delay, "attempt": attempt})
+            if self._connect_to_peer(last_host, UDP_PORT, {"deviceId": peer_id}):
+                return  # Success — _after_tls will handle the rest
+            attempt += 1
+            delay = min(delay * 2, RECONNECT_MAX_DELAY)
+
+    def _packet_loop(self, tls: ssl.SSLSocket, peer_id: str, peer_host: str, fingerprint: Optional[str]) -> None:
+        """Read and dispatch packets from an established TLS connection."""
+        buffer = b""
+        send_queue: queue.Queue = queue.Queue()
+        with self.data_lock:
+            self.peer_connections[peer_id] = {"tls": tls, "send_queue": send_queue, "host": peer_host}
+        last_send_time = time.monotonic()
+        try:
+            while not self.stop_event.is_set():
+                # Use select to check for incoming data (non-blocking on the raw socket)
+                try:
+                    readable, _, _ = select.select([tls], [], [], 1.0)
+                except (OSError, ValueError):
+                    break
+
+                if readable:
+                    try:
+                        chunk = tls.recv(65536)
+                    except socket.timeout:
+                        chunk = None
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    buffer += chunk
+                    if len(buffer) > MAX_PACKET_BYTES and b"\n" not in buffer:
+                        self.events.write_event(
+                            "packet_rejected",
+                            {
+                                "device_id": peer_id,
+                                "host": peer_host,
+                                "reason": "packet_too_large",
+                                "size": len(buffer),
+                                "max_size": MAX_PACKET_BYTES,
+                            },
+                        )
+                        buffer = b""
+                        continue
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        if len(line) + 1 > MAX_PACKET_BYTES:
+                            self.events.write_event(
+                                "packet_rejected",
+                                {
+                                    "device_id": peer_id,
+                                    "host": peer_host,
+                                    "reason": "packet_too_large",
+                                    "size": len(line) + 1,
+                                    "max_size": MAX_PACKET_BYTES,
+                                },
+                            )
+                            continue
+                        packet = self._decode_packet(line + b"\n", context={"stage": "tls_packet", "device_id": peer_id, "host": peer_host})
+                        try:
+                            self._handle_packet(tls, peer_id, peer_host, packet, fingerprint)
+                        except Exception as exc:
+                            self.events.write_event("packet_handler_error", {"device_id": peer_id, "host": peer_host, "packet_type": packet.get("type"), "error_type": type(exc).__name__, "message": str(exc)})
+                            self._log("KDE receiver packet handler error: %s", exc)
+
+                # Drain send queue — packets submitted by other threads (e.g. share requests)
+                while True:
+                    try:
+                        data = send_queue.get_nowait()
+                        tls.sendall(data)
+                        last_send_time = time.monotonic()
+                    except queue.Empty:
+                        break
+                    except OSError:
+                        return
+
+                # Heartbeat — send kdeconnect.ping periodically
+                if time.monotonic() - last_send_time > HEARTBEAT_INTERVAL_SECONDS:
+                    try:
+                        tls.sendall(self._encode_packet({"type": "kdeconnect.ping", "body": {}}))
+                        last_send_time = time.monotonic()
+                    except OSError:
+                        break
+        finally:
+            with self.data_lock:
+                self.peer_connections.pop(peer_id, None)
+            self._set_connection_state(peer_id, "trusted" if self._trusted_devices().get(peer_id) else "discovered", "session_closed", host=peer_host)
 
     def _handle_packet(
         self,
@@ -850,6 +1091,7 @@ class KDEckKdeReceiver:
         packet: dict[str, Any],
         fingerprint: Optional[str],
     ) -> None:
+        """Dispatch a single decoded packet to the appropriate handler."""
         packet_type = packet.get("type")
         body = packet.get("body") or {}
         if packet_type == PACKET_PAIR:
@@ -858,7 +1100,8 @@ class KDEckKdeReceiver:
                 trusted.pop(peer_id, None)
                 self._write_trusted_devices(trusted)
                 self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": False, "time": int(time.time())})
-                self._write_event("unpaired", {"device_id": peer_id})
+                self._set_connection_state(peer_id, "discovered", "unpaired", host=peer_host)
+                self.events.write_event("unpaired", {"device_id": peer_id})
                 self._set_diagnostic("pending_pair", None)
                 return
             if self._is_trusted_device(peer_id, fingerprint):
@@ -867,14 +1110,21 @@ class KDEckKdeReceiver:
             self._accept_pair_inner(tls, peer_id, peer_host, fingerprint)
             return
         if not self._is_trusted_device(peer_id, fingerprint):
-            self._write_event("untrusted_packet_rejected", {"device_id": peer_id, "packet_type": packet_type})
+            self.events.write_event("untrusted_packet_rejected", {"device_id": peer_id, "packet_type": packet_type})
+            return
+        if packet_type == PACKET_PING:
+            try:
+                tls.sendall(self._encode_packet({"type": PACKET_PING, "body": {}}))
+                self.events.write_event("ping_reply_sent", {"device_id": peer_id})
+            except OSError:
+                pass
             return
         if packet_type in (PACKET_CLIPBOARD, PACKET_CLIPBOARD_CONNECT):
             content = str(body.get("content") or "")
             if content:
                 self.on_clipboard(content, peer_id)
                 self._set_diagnostic("last_clipboard", {"device_id": peer_id, "length": len(content), "time": int(time.time())})
-                self._write_event("clipboard_received", {"device_id": peer_id, "length": len(content)})
+                self.events.write_event("clipboard_received", {"device_id": peer_id, "length": len(content)})
             return
         if packet_type == PACKET_SHARE_REQUEST:
             self._receive_share_request(peer_id, peer_host, packet)
@@ -886,22 +1136,16 @@ class KDEckKdeReceiver:
         peer_host: str,
         fingerprint: Optional[str],
     ) -> None:
+        """Accept a pairing request and store the peer as a trusted device."""
         trusted = self._trusted_devices()
-        existing = trusted.get(peer_id) if isinstance(trusted.get(peer_id), dict) else {}
-        trust_mode = "fingerprint" if fingerprint else "device_id"
-        trusted[peer_id] = {
-            **existing,
-            "paired_at": int(time.time()),
-            "fingerprint": fingerprint,
-            "trust_mode": trust_mode,
-            "last_host": peer_host,
-            "last_connected": int(time.time()),
-        }
+        now = int(time.time())
+        trusted, trust_mode = _accept_pair_record_standalone(trusted, peer_id, peer_host, fingerprint, now)
         self._write_trusted_devices(trusted)
         tls.sendall(self._encode_packet({"type": PACKET_PAIR, "body": {"pair": True}}))
         self._log("KDE receiver paired with %s", peer_id)
-        self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": True, "time": int(time.time()), "trust_mode": trust_mode})
-        self._write_event(
+        self._set_diagnostic("last_pair", {"device_id": peer_id, "paired": True, "time": now, "trust_mode": trust_mode})
+        self._set_connection_state(peer_id, "trusted", "pair_accepted", host=peer_host, trust_mode=trust_mode)
+        self.events.write_event(
             "paired",
             {
                 "device_id": peer_id,
@@ -912,54 +1156,38 @@ class KDEckKdeReceiver:
         )
 
     def _identity_packet(self, target_device_id: Optional[str] = None, target_protocol_version: Any = None) -> dict[str, Any]:
-        body: dict[str, Any] = {
-            "deviceId": self.device_id,
-            "deviceName": DEVICE_NAME,
-            "deviceType": DEVICE_TYPE,
-            "protocolVersion": PROTOCOL_VERSION,
-            "incomingCapabilities": CAPABILITIES,
-            "outgoingCapabilities": [],
-        }
-        tcp_port = self._tcp_port_value()
-        if tcp_port:
-            body["tcpPort"] = tcp_port
-        if target_device_id:
-            body["targetDeviceId"] = target_device_id
-        if target_protocol_version:
-            body["targetProtocolVersion"] = target_protocol_version
-        return {"type": PACKET_IDENTITY, "body": body}
+        return _identity_packet_standalone(
+            self.device_id,
+            tcp_port=self._tcp_port_value(),
+            target_device_id=target_device_id,
+            target_protocol_version=target_protocol_version,
+        )
 
     def _should_connect_to_peer(self, host: str, port: int, peer_identity: dict[str, Any]) -> bool:
         device_id = peer_identity.get("deviceId")
-        if not device_id:
-            return False
-        key = f"{device_id}@{host}:{port}"
         now = time.monotonic()
         cooldown = TRUSTED_PEER_CONNECT_COOLDOWN_SECONDS if self._trusted_devices().get(device_id) else PEER_CONNECT_COOLDOWN_SECONDS
         with self.data_lock:
-            previous = self.peer_connect_attempts.get(key)
-            if previous is not None and now - previous < cooldown:
-                skip = True
-            else:
+            allowed, key, skipped_event = _peer_connect_decision_standalone(
+                device_id,
+                host,
+                port,
+                now,
+                self.peer_connect_attempts,
+                cooldown,
+            )
+            if allowed:
                 self.peer_connect_attempts[key] = now
-                skip = False
-        if skip:
-            self._write_event("peer_connect_skipped", {"host": host, "port": port, "device_id": device_id, "reason": "cooldown", "cooldown_seconds": cooldown})
+        if skipped_event:
+            self.events.write_event("peer_connect_skipped", skipped_event)
             return False
-        return True
+        return allowed
 
     def _identity_reply_ports(self, source_port: int, peer_identity: dict[str, Any]) -> list[int]:
-        device_type = str(peer_identity.get("deviceType") or "").lower()
-        if device_type in ANDROID_DEVICE_TYPES:
-            return [source_port]
-        reply_ports = [source_port]
-        if UDP_PORT not in reply_ports:
-            reply_ports.append(UDP_PORT)
-        return reply_ports
+        return _identity_reply_ports_standalone(source_port, peer_identity)
 
     def _peer_tls_mode(self, device_type: str) -> str:
-        # Android 0.3.1 实测 TLS client 模式超时；0.3.2 回到 0.2.0 的主动连接 server 模式。
-        return "server"
+        return _peer_tls_mode_standalone(device_type)
 
     def _device_id(self) -> str:
         if self.device_id_path.exists():
@@ -971,46 +1199,8 @@ class KDEckKdeReceiver:
         return value
 
     def _ensure_certificate(self) -> None:
-        if self.cert_path.exists() and self.key_path.exists():
-            self._write_event("certificate_ready", {"cert": str(self.cert_path), "existing": True})
-            return
-        openssl = shutil.which("openssl")
-        if not openssl:
-            raise RuntimeError("找不到 openssl，无法生成 KDEck KDE Connect 证书。")
-        env = {
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
-            "HOME": "/home/deck",
-            "USER": "deck",
-            "LOGNAME": "deck",
-            "LANG": "en_US.UTF-8",
-        }
-        result = subprocess.run(
-            [
-                openssl,
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-keyout",
-                str(self.key_path),
-                "-out",
-                str(self.cert_path),
-                "-days",
-                "3650",
-                "-subj",
-                f"/CN={self.device_id}",
-            ],
-            env=env,
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise RuntimeError((result.stderr or "openssl req failed").strip())
-        os.chmod(self.key_path, 0o600)
-        self._write_event("certificate_ready", {"cert": str(self.cert_path), "existing": False})
+        existing = _ensure_certificate_standalone(self.cert_path, self.key_path, self.device_id)
+        self.events.write_event("certificate_ready", {"cert": str(self.cert_path), "existing": existing})
 
     def _read_plain_packet(self, conn: socket.socket) -> dict[str, Any]:
         conn.settimeout(5)
@@ -1023,7 +1213,7 @@ class KDEckKdeReceiver:
             data += chunk
             oversized = len(data) > MAX_PACKET_BYTES
         if oversized:
-            self._write_event("packet_rejected", {"stage": "plain_identity", "reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES})
+            self.events.write_event("packet_rejected", {"stage": "plain_identity", "reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES})
             return {}
         return self._decode_packet(data, context={"stage": "plain_identity"})
 
@@ -1037,49 +1227,45 @@ class KDEckKdeReceiver:
             data += chunk
             oversized = len(data) > MAX_PACKET_BYTES
         if oversized:
-            self._write_event("packet_rejected", {"stage": "secure_identity", "reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES})
+            self.events.write_event("packet_rejected", {"stage": "secure_identity", "reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES})
             return {}
         return self._decode_packet(data, context={"stage": "secure_identity"})
 
     def _encode_packet(self, packet: dict[str, Any]) -> bytes:
-        payload = {
-            "id": int(time.time() * 1000),
-            "type": packet["type"],
-            "body": packet.get("body") or {},
-        }
-        return (json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+        return _encode_packet_standalone(packet)
 
     def _decode_packet(self, data: bytes, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         if len(data) > MAX_PACKET_BYTES:
-            self._write_event("packet_rejected", {"reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES, **(context or {})})
+            self.events.write_event("packet_rejected", {"reason": "packet_too_large", "size": len(data), "max_size": MAX_PACKET_BYTES, **(context or {})})
             return {}
         try:
             packet = json.loads(data.decode("utf-8", errors="replace").strip())
         except json.JSONDecodeError:
-            self._write_event("packet_decode_failed", {"reason": "invalid_json", "size": len(data), **(context or {})})
+            self.events.write_event("packet_decode_failed", {"reason": "invalid_json", "size": len(data), **(context or {})})
             return {}
         if not isinstance(packet, dict):
-            self._write_event("packet_decode_failed", {"reason": "not_object", "size": len(data), **(context or {})})
+            self.events.write_event("packet_decode_failed", {"reason": "not_object", "size": len(data), **(context or {})})
             return {}
         if "type" in packet and "body" in packet and not isinstance(packet.get("body"), dict):
-            self._write_event("packet_decode_failed", {"reason": "body_not_object", "packet_type": packet.get("type"), **(context or {})})
+            self.events.write_event("packet_decode_failed", {"reason": "body_not_object", "packet_type": packet.get("type"), **(context or {})})
             return {}
         return packet
 
     def _receive_share_request(self, peer_id: str, peer_host: str, packet: dict[str, Any]) -> None:
+        """Handle an incoming share request: receive text or download a file over TLS."""
         body = packet.get("body") or {}
         transfer_info = packet.get("payloadTransferInfo") or {}
         payload_size = self._packet_payload_size(packet)
         if payload_size is None:
-            self._write_event("share_ignored", {"device_id": peer_id, "reason": "invalid_payload_size", "payload_size": packet.get("payloadSize")})
+            self.events.write_event("share_ignored", {"device_id": peer_id, "reason": "invalid_payload_size", "payload_size": packet.get("payloadSize")})
             return
         if body.get("text"):
             text = str(body.get("text") or "")
             self.on_clipboard(text, peer_id)
-            self._write_event("shared_text_received", {"device_id": peer_id, "length": len(text)})
+            self.events.write_event("shared_text_received", {"device_id": peer_id, "length": len(text)})
             return
         if not transfer_info or "port" not in transfer_info:
-            self._write_event("share_ignored", {"device_id": peer_id, "reason": "missing_payload"})
+            self.events.write_event("share_ignored", {"device_id": peer_id, "reason": "missing_payload"})
             return
 
         filename = self._safe_filename(str(body.get("filename") or f"kdeck-{int(time.time())}"))
@@ -1087,7 +1273,7 @@ class KDEckKdeReceiver:
         partial_destination = destination.with_name(f"{destination.name}.part")
         port = self._payload_port(transfer_info)
         if port is None:
-            self._write_event("share_ignored", {"device_id": peer_id, "file": filename, "reason": "invalid_payload_port", "port": transfer_info.get("port")})
+            self.events.write_event("share_ignored", {"device_id": peer_id, "file": filename, "reason": "invalid_payload_port", "port": transfer_info.get("port")})
             return
         if payload_size > MAX_FILE_BYTES:
             self._record_file_failure(peer_id, filename, "file_too_large", expected=payload_size, max_size=MAX_FILE_BYTES)
@@ -1096,151 +1282,104 @@ class KDEckKdeReceiver:
             self._record_file_failure(peer_id, filename, "not_enough_space", expected=payload_size, min_free_space=MIN_FREE_SPACE_BYTES)
             return
 
-        try:
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            context.load_cert_chain(str(self.cert_path), str(self.key_path))
-            raw = socket.create_connection((peer_host, port), timeout=15)
-            with context.wrap_socket(raw, server_hostname=peer_id) as tls:
-                payload_fingerprint = self._peer_fingerprint(tls)
-                if not self._is_trusted_device(peer_id, payload_fingerprint):
-                    payload_error = {"device_id": peer_id, "file": filename, "error": "untrusted_payload_certificate", "time": int(time.time())}
-                    self._set_diagnostic("last_payload_error", payload_error)
-                    self._write_event(
-                        "file_receive_failed",
-                        payload_error,
-                    )
-                    return
-                tls.settimeout(30)
-                written = 0
-                self.incoming_dir.mkdir(parents=True, exist_ok=True)
+        for attempt in range(1 + PAYLOAD_RECEIVE_MAX_RETRIES):
+            try:
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                context.load_cert_chain(str(self.cert_path), str(self.key_path))
+                raw = socket.create_connection((peer_host, port), timeout=30)
+                # TCP keepalive — detect dead connections faster than the TLS timeout
+                raw.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
                 try:
-                    partial_destination.unlink()
-                except FileNotFoundError:
+                    raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_BUFFER_BYTES)
+                except OSError:
                     pass
-                with partial_destination.open("wb") as output:
-                    while written < payload_size:
-                        chunk = tls.recv(min(65536, payload_size - written))
-                        if not chunk:
-                            break
-                        output.write(chunk)
-                        written += len(chunk)
-            if written != payload_size:
+                with context.wrap_socket(raw, server_hostname=peer_id) as tls:
+                    payload_fingerprint = self._peer_fingerprint(tls)
+                    if not self._is_trusted_device(peer_id, payload_fingerprint):
+                        payload_error = {"device_id": peer_id, "file": filename, "error": "untrusted_payload_certificate", "time": int(time.time())}
+                        self._set_diagnostic("last_payload_error", payload_error)
+                        self.events.write_event("file_receive_failed", payload_error)
+                        return
+                    tls.settimeout(30)
+                    written = 0
+                    deadline = time.monotonic() + FILE_RECV_TOTAL_TIMEOUT_SECONDS
+                    self.incoming_dir.mkdir(parents=True, exist_ok=True)
+                    try:
+                        partial_destination.unlink()
+                    except FileNotFoundError:
+                        pass
+                    buf = bytearray(min(FILE_CHUNK_BYTES, payload_size))
+                    with partial_destination.open("wb") as output:
+                        while written < payload_size:
+                            if time.monotonic() > deadline:
+                                raise TimeoutError(f"Download exceeded overall timeout ({FILE_RECV_TOTAL_TIMEOUT_SECONDS}s)")
+                            nbytes = tls.recv_into(buf, min(len(buf), payload_size - written))
+                            if nbytes == 0:
+                                break
+                            output.write(buf[:nbytes])
+                            written += nbytes
+                if written != payload_size:
+                    try:
+                        partial_destination.unlink()
+                    except OSError:
+                        pass
+                    raise ConnectionError(f"Payload incomplete: {written}/{payload_size}")
+                partial_destination.replace(destination)
+                file_event = {"device_id": peer_id, "file": destination.name, "path": str(destination), "size": written}
+                self._set_diagnostic("last_file", {"status": "received", "time": int(time.time()), **file_event})
+                self.events.write_event("file_received", file_event)
+                if self.on_file_received:
+                    self.on_file_received(file_event)
+                return  # Success
+            except Exception as exc:
                 try:
                     partial_destination.unlink()
                 except OSError:
                     pass
-                self._record_file_failure(peer_id, filename, "payload_incomplete", expected=payload_size, written=written)
-                return
-            partial_destination.replace(destination)
-            file_event = {"device_id": peer_id, "file": destination.name, "path": str(destination), "size": written}
-            self._set_diagnostic("last_file", {"status": "received", "time": int(time.time()), **file_event})
-            self._write_event("file_received", file_event)
-        except Exception as exc:
-            try:
-                partial_destination.unlink()
-            except OSError:
-                pass
-            self._set_diagnostic(
-                "last_file",
-                {"device_id": peer_id, "file": filename, "status": "failed", "error": str(exc), "time": int(time.time())},
-            )
-            self._set_diagnostic("last_payload_error", {"device_id": peer_id, "file": filename, "error": str(exc), "time": int(time.time())})
-            self._write_event("file_receive_failed", {"device_id": peer_id, "file": filename, "error": str(exc)})
-            self._log("KDE receiver file transfer failed: %s", exc)
+                if attempt < PAYLOAD_RECEIVE_MAX_RETRIES:
+                    self.events.write_event("payload_receive_retry", {"device_id": peer_id, "file": filename, "error": str(exc), "attempt": attempt + 1})
+                    self._log("KDE receiver payload receive failed (attempt %d/%d), retrying: %s", attempt + 1, 1 + PAYLOAD_RECEIVE_MAX_RETRIES, exc)
+                    time.sleep(PAYLOAD_RECEIVE_RETRY_DELAY)
+                    continue
+                # Final attempt failed
+                self._set_diagnostic(
+                    "last_file",
+                    {"device_id": peer_id, "file": filename, "status": "failed", "error": str(exc), "time": int(time.time())},
+                )
+                self._set_diagnostic("last_payload_error", {"device_id": peer_id, "file": filename, "error": str(exc), "time": int(time.time())})
+                self.events.write_event("file_receive_failed", {"device_id": peer_id, "file": filename, "error": str(exc)})
+                self._log("KDE receiver file transfer failed after %d attempts: %s", 1 + PAYLOAD_RECEIVE_MAX_RETRIES, exc)
 
     def _safe_filename(self, filename: str) -> str:
-        clean = filename.replace("\\", "/").split("/")[-1].strip()
-        clean = "".join(ch for ch in clean if ch not in '<>:"|?*\0')
-        return clean[:180] or f"kdeck-{int(time.time())}"
+        return _safe_filename_standalone(filename)
 
     def _unique_destination(self, filename: str) -> Path:
-        destination = self.incoming_dir / filename
-        if not destination.exists() and not destination.with_name(f"{destination.name}.part").exists():
-            return destination
-        stem = destination.stem
-        suffix = destination.suffix
-        for index in range(1, 1000):
-            candidate = self.incoming_dir / f"{stem} ({index}){suffix}"
-            if not candidate.exists() and not candidate.with_name(f"{candidate.name}.part").exists():
-                return candidate
-        return self.incoming_dir / f"{stem}-{int(time.time())}{suffix}"
+        return _unique_destination_standalone(self.incoming_dir, filename)
 
     def _packet_payload_size(self, packet: dict[str, Any]) -> Optional[int]:
-        try:
-            payload_size = int(packet.get("payloadSize") or 0)
-        except (TypeError, ValueError):
-            return None
-        return payload_size if payload_size >= 0 else None
+        return _packet_payload_size_standalone(packet)
 
     def _payload_port(self, transfer_info: dict[str, Any]) -> Optional[int]:
-        try:
-            port = int(transfer_info.get("port"))
-        except (TypeError, ValueError):
-            return None
-        return port if 1 <= port <= 65535 else None
+        return _payload_port_standalone(transfer_info)
 
     def _has_enough_space(self, payload_size: int) -> bool:
-        try:
-            usage = shutil.disk_usage(self.incoming_dir if self.incoming_dir.exists() else self.incoming_dir.parent)
-        except OSError:
-            return False
-        return usage.free >= payload_size + MIN_FREE_SPACE_BYTES
+        return _has_enough_space_standalone(self.incoming_dir, payload_size, MIN_FREE_SPACE_BYTES)
 
     def _record_file_failure(self, peer_id: str, filename: str, reason: str, **details: Any) -> None:
-        event = {"device_id": peer_id, "file": filename, "error": reason, **details}
-        self._set_diagnostic("last_file", {"status": "failed", "time": int(time.time()), **event})
-        self._set_diagnostic("last_payload_error", {"time": int(time.time()), **event})
-        self._write_event("file_receive_failed", event)
+        _record_file_failure_standalone(
+            self._set_diagnostic, self.events.write_event,
+            peer_id, filename, reason, **details,
+        )
 
     def _network_interfaces(self) -> list[dict[str, Any]]:
-        interfaces: list[dict[str, Any]] = []
-        if shutil.which("ip"):
-            try:
-                result = subprocess.run(
-                    ["ip", "-j", "addr"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-                for iface in json.loads(result.stdout):
-                    name = iface.get("ifname", "")
-                    if self._is_ignored_interface(name):
-                        continue
-                    for addr in iface.get("addr_info", []):
-                        if addr.get("family") == "inet" and addr.get("local"):
-                            local = addr.get("local")
-                            if not self._is_usable_ipv4(local):
-                                continue
-                            interfaces.append(
-                                {
-                                    "interface": name,
-                                    "address": local,
-                                    "broadcast": addr.get("broadcast"),
-                                    "prefixlen": addr.get("prefixlen"),
-                                    "priority": self._interface_priority(name),
-                                    "path_type": self._interface_path_type(name),
-                                }
-                            )
-            except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-                pass
-        interfaces.sort(key=lambda item: (-int(item.get("priority") or 0), item.get("interface") or "", item.get("address") or ""))
-        return interfaces
+        return _network_interfaces_standalone()
 
     def _bind_available_tcp_port(self, server: socket.socket, port_low: int = None, port_mid: int = None) -> int:
         lo = port_low if port_low is not None else TCP_PORT_MIN
         hi = port_mid if port_mid is not None else TCP_PORT_MAX
-        last_error: Optional[OSError] = None
-        for port in range(lo, hi + 1):
-            try:
-                server.bind(("0.0.0.0", port))
-                return port
-            except OSError as exc:
-                last_error = exc
-                continue
-        raise OSError(f"no available TCP port in {lo}-{hi}: {last_error}")
+        return _bind_available_tcp_port_standalone(server, port_low=lo, port_mid=hi)
 
     def _wait_for_listener_state(self, timeout: float) -> None:
         deadline = time.monotonic() + timeout
@@ -1253,92 +1392,32 @@ class KDEckKdeReceiver:
             time.sleep(0.05)
 
     def _peer_fingerprint(self, tls: ssl.SSLSocket) -> Optional[str]:
-        try:
-            cert = tls.getpeercert(binary_form=True)
-        except (ssl.SSLError, ValueError):
-            cert = None
-        if not cert:
-            return None
-        return hashlib.sha256(cert).hexdigest()
+        return _peer_fingerprint_standalone(tls)
 
     def _is_trusted_device(self, peer_id: str, fingerprint: Optional[str]) -> bool:
-        trusted = self._trusted_devices().get(peer_id)
-        if not isinstance(trusted, dict):
-            return False
-        trusted_fingerprint = trusted.get("fingerprint")
-        if trusted_fingerprint:
-            return bool(fingerprint and fingerprint == trusted_fingerprint)
-        return trusted.get("trust_mode") == "device_id"
+        return _is_trusted_device_standalone(self._trusted_devices(), peer_id, fingerprint)
 
     def _broadcast_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str]]:
-        targets: list[tuple[Optional[str], str]] = []
-        seen = set()
-        for iface in interfaces:
-            source = iface.get("address")
-            for target in ("255.255.255.255", iface.get("broadcast")):
-                if not target:
-                    continue
-                key = (source, target)
-                if key not in seen:
-                    seen.add(key)
-                    targets.append((source, target))
-        if not targets:
-            targets.append((None, "255.255.255.255"))
-        return targets
+        return _broadcast_targets_standalone(interfaces)
 
     def _recent_discovery_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str, int]]:
         now = int(time.time())
-        targets: list[tuple[Optional[str], str, int]] = []
-        seen = set()
         with self.state_lock:
             devices = list((self.diagnostics.get("discovered_devices") or {}).values())
-        for device in devices:
-            host = device.get("host")
-            if not host:
-                continue
-            if now - int(device.get("last_seen") or 0) > RECENT_DISCOVERY_DIRECT_SECONDS:
-                continue
-            ports = [int(device.get("udp_source_port") or 0), UDP_PORT]
-            source_ips = self._source_ips_for_host(host, interfaces)
-            for port in ports:
-                if not (1 <= port <= 65535):
-                    continue
-                for source_ip in source_ips:
-                    key = (source_ip, host, port)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    targets.append((source_ip, host, port))
-        return targets[:16]
+        return _recent_discovery_targets_standalone(devices, interfaces, now, self._source_ips_for_host)
 
     def _trusted_direct_targets(self, interfaces: list[dict[str, Any]]) -> list[tuple[Optional[str], str, int]]:
         now = int(time.time())
-        targets: list[tuple[Optional[str], str, int]] = []
-        seen = set()
-        trusted = self._trusted_devices()
-        for device_id, data in trusted.items():
-            if not isinstance(data, dict):
-                continue
-            host = data.get("last_host")
-            if not host:
-                continue
-            last_seen = int(data.get("last_seen") or data.get("last_connected") or 0)
-            if last_seen and now - last_seen > TRUSTED_DEVICE_DIRECT_SECONDS:
-                continue
-            ports = [int(data.get("udp_source_port") or 0), UDP_PORT]
-            source_ips = self._source_ips_for_host(str(host), interfaces)
-            for port in ports:
-                if not (1 <= port <= 65535):
-                    continue
-                for source_ip in source_ips:
-                    key = (source_ip, str(host), port)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    targets.append((source_ip, str(host), port))
-            self._write_event(
+        targets, events = _trusted_direct_targets_standalone(
+            self._trusted_devices(),
+            interfaces,
+            now,
+            self._source_ips_for_host,
+        )
+        for event in events:
+            self.events.write_event(
                 "trusted_device_reannounce_target",
-                {"device_id": device_id, "host": host, "ports": ports, "target_count": len(targets)},
+                event,
             )
         self._set_diagnostic(
             "last_reannounce_targets",
@@ -1348,59 +1427,29 @@ class KDEckKdeReceiver:
                 "targets": [{"source": source, "target": target, "port": port} for source, target, port in targets[:16]],
             },
         )
-        return targets[:16]
+        return targets
 
     def _merge_direct_targets(
         self,
         first: list[tuple[Optional[str], str, int]],
         second: list[tuple[Optional[str], str, int]],
     ) -> list[tuple[Optional[str], str, int]]:
-        merged: list[tuple[Optional[str], str, int]] = []
-        seen = set()
-        for item in first + second:
-            if item in seen:
-                continue
-            seen.add(item)
-            merged.append(item)
-        return merged[:24]
+        return _merge_direct_targets_standalone(first, second)
 
     def _source_ips_for_host(self, host: str, interfaces: list[dict[str, Any]]) -> list[Optional[str]]:
-        matches: list[tuple[int, str]] = []
-        fallbacks: list[tuple[int, str]] = []
-        try:
-            peer = ipaddress.ip_address(host)
-        except ValueError:
-            peer = None
-        for iface in interfaces:
-            source = iface.get("address")
-            if not source:
-                continue
-            priority = int(iface.get("priority") or self._interface_priority(iface.get("interface") or ""))
-            fallbacks.append((priority, source))
-            if peer is None:
-                continue
-            try:
-                prefixlen = int(iface.get("prefixlen") or 32)
-                network = ipaddress.ip_interface(f"{source}/{prefixlen}").network
-            except ValueError:
-                continue
-            if peer in network:
-                matches.append((priority, source))
-        selected = matches or fallbacks
-        selected.sort(key=lambda item: (-item[0], item[1]))
-        return [source for _priority, source in selected] or [None]
+        return _source_ips_for_host_standalone(host, interfaces)
 
     def _is_ignored_interface(self, name: str) -> bool:
-        return is_ignored_interface(name)
+        return _is_ignored_interface_standalone(name)
 
     def _interface_path_type(self, name: str) -> str:
-        return interface_path_type(name)
+        return _interface_path_type_standalone(name)
 
     def _interface_priority(self, name: str) -> int:
-        return interface_priority(name)
+        return _interface_priority_standalone(name)
 
     def _is_usable_ipv4(self, address: Optional[str]) -> bool:
-        return is_usable_ipv4(address)
+        return _is_usable_ipv4_standalone(address)
 
     def _local_ipv4_addresses(self) -> set[str]:
         addresses = {"127.0.0.1"}
@@ -1437,7 +1486,8 @@ class KDEckKdeReceiver:
         with self.state_lock:
             self.diagnostics["last_discovery_received"] = item
             self.diagnostics.setdefault("discovered_devices", {})[device_id] = item
-        self._write_event("discovery_received", item)
+        self.events.write_event("discovery_received", item)
+        self._set_connection_state(device_id, "discovered", "discovery_received", host=addr[0], port=addr[1])
         self._remember_trusted_device_metadata(device_id, addr[0], body, connected=False, udp_source_port=addr[1])
 
     def _remember_trusted_device_metadata(
@@ -1451,233 +1501,383 @@ class KDEckKdeReceiver:
         if not device_id:
             return
         trusted = self._trusted_devices()
-        data = trusted.get(device_id)
-        if not isinstance(data, dict):
+        if not isinstance(trusted.get(device_id), dict):
             return
-        now = int(time.time())
-        data.update(
-            {
-                "device_name": identity.get("deviceName") or data.get("device_name"),
-                "device_type": identity.get("deviceType") or data.get("device_type"),
-                "protocol_version": identity.get("protocolVersion") or data.get("protocol_version"),
-                "tcp_port": identity.get("tcpPort") or data.get("tcp_port"),
-                "last_host": host,
-                "last_seen": now,
-            }
+        _remember_trusted_device_metadata_standalone(
+            trusted, device_id, host, identity, connected, udp_source_port,
         )
-        if udp_source_port:
-            data["udp_source_port"] = udp_source_port
-        if connected:
-            data["last_connected"] = now
-        trusted[device_id] = data
         self._write_trusted_devices(trusted)
-        self._write_event(
+        self.events.write_event(
             "trusted_device_metadata_updated",
             {"device_id": device_id, "host": host, "connected": connected, "udp_source_port": udp_source_port},
         )
+        if connected:
+            self._set_connection_state(device_id, "connected", "trusted_metadata_connected", host=host)
 
     def _set_diagnostic(self, key: str, value: Any) -> None:
         with self.state_lock:
             self.diagnostics[key] = value
 
+    def set_connection_state(self, device_id: str, state: str, reason: str, **details: Any) -> None:
+        """Public wrapper used by the backend when state is known outside receiver threads."""
+        self._set_connection_state(device_id, state, reason, **details)
+
+    def _set_connection_state(self, device_id: str, state: str, reason: str, **details: Any) -> None:
+        device_key = device_id or self.device_id
+        now = int(time.time())
+        with self.state_lock:
+            states = self.diagnostics.setdefault("connection_states", {})
+            current = states.get(device_key) if isinstance(states, dict) else None
+            current_state = current.get("state") if isinstance(current, dict) else None
+            transition = state_transition(current_state, state, reason, device_key, now, **details)
+            if isinstance(states, dict):
+                states[device_key] = {
+                    "device_id": device_key,
+                    "state": state,
+                    "reason": reason,
+                    "time": now,
+                    **details,
+                }
+            if transition is None:
+                return
+            self.diagnostics["last_state_transition"] = transition
+        self.events.write_event("connection_state_changed", transition)
+
     def _trusted_devices(self) -> dict[str, Any]:
-        if not self.trusted_path.exists():
-            return {}
-        try:
-            data = json.loads(self.trusted_path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            return {}
+        return _read_trusted_devices_standalone(self.trusted_path)
 
     def _write_trusted_devices(self, data: dict[str, Any]) -> None:
-        self.trusted_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        def _on_error(exc: OSError) -> None:
+            self.events.write_event("trusted_devices_write_failed", {"error": str(exc)})
+            self._log("KDE receiver trusted devices write failed: %s", exc)
+        _write_trusted_devices_standalone(self.trusted_path, data, on_error=_on_error)
 
-    EVENT_BUFFER_FLUSH_SIZE = 64
 
-    def _write_event(self, event: str, details: dict[str, Any]) -> None:
-        payload = {"time": int(time.time()), "event": event, **details}
-        with self.event_buffer_lock:
-            try:
-                self._rotate_event_log_if_needed()
-            except OSError:
-                pass
-            self.event_buffer.append(payload)
-            if len(self.event_buffer) >= self.EVENT_BUFFER_FLUSH_SIZE:
-                self._flush_event_buffer_locked()
-        self._log("KDE receiver event %s %s", event, details)
+    def send_share_request_to_peer(
+        self,
+        file_path: str,
+        device_id: str,
+        progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> dict[str, Any]:
+        """Send a file to a trusted peer: start a TLS file server, then deliver the share request via persistent or new connection."""
+        def _progress(phase: str, **details: Any) -> None:
+            if progress_callback:
+                progress_callback({"phase": phase, **details})
 
-    def _flush_event_buffer(self) -> None:
-        with self.event_buffer_lock:
-            self._flush_event_buffer_locked()
+        def _transfer_completed(state: dict[str, Any], expected_size: int) -> bool:
+            return bool(state.get("completed")) and int(state.get("bytes_sent") or 0) >= expected_size
 
-    def _flush_event_buffer_locked(self) -> None:
-        """Must be called with event_buffer_lock held."""
-        if not self.event_buffer:
-            return
-        try:
-            with self.event_log_path.open("a", encoding="utf-8") as log:
-                for payload in self.event_buffer:
-                    log.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
-        self.event_buffer.clear()
+        def _transfer_incomplete_error(state: dict[str, Any], expected_size: int) -> dict[str, Any]:
+            sent = int(state.get("bytes_sent") or 0)
+            return {
+                "ok": False,
+                "error": {
+                    "code": "transfer_incomplete",
+                    "message": f"File transfer incomplete: {sent}/{expected_size} bytes sent.",
+                },
+                "bytes_sent": sent,
+                "total_bytes": expected_size,
+            }
 
-    def _rotate_event_log_if_needed(self) -> None:
-        try:
-            if not self.event_log_path.exists() or self.event_log_path.stat().st_size < EVENT_LOG_MAX_BYTES:
-                return
-            for stale in self.event_log_path.parent.glob(f"{self.event_log_path.name}.*"):
-                try:
-                    index = int(stale.name.rsplit(".", 1)[1])
-                except (IndexError, ValueError):
-                    continue
-                if index > EVENT_LOG_BACKUPS:
-                    stale.unlink()
-            oldest = self.event_log_path.with_name(f"{self.event_log_path.name}.{EVENT_LOG_BACKUPS}")
-            if oldest.exists():
-                oldest.unlink()
-            for index in range(EVENT_LOG_BACKUPS - 1, 0, -1):
-                source = self.event_log_path.with_name(f"{self.event_log_path.name}.{index}")
-                target = self.event_log_path.with_name(f"{self.event_log_path.name}.{index + 1}")
-                if source.exists():
-                    source.replace(target)
-            self.event_log_path.replace(self.event_log_path.with_name(f"{self.event_log_path.name}.1"))
-            self.event_log_path.write_text("", encoding="utf-8")
-        except OSError:
-            pass
+        def _record_send_failure(code: str, message: str, stage: str = "transfer", **details: Any) -> None:
+            error = diagnostic_error(code, stage, message, device_id=device_id, file=Path(file_path).name, **details)
+            self._set_diagnostic("last_payload_error", error)
+            self._set_diagnostic("last_error", error)
 
-    def _tail_events(self, limit: int) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        with self.event_buffer_lock:
-            events.extend(self.event_buffer[-limit:])
-        disk_limit = limit - len(events)
-        if disk_limit > 0 and self.event_log_path.exists():
-            try:
-                lines = self.event_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                lines = []
-            for line in lines[-disk_limit:]:
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        return events[-limit:]
-
-    def send_share_request_to_peer(self, file_path: str, device_id: str) -> dict[str, Any]:
         trusted = self._trusted_devices().get(device_id)
         if not trusted:
+            _progress("failed", error_code="not_trusted", error_message="Device is not trusted.")
             return {"ok": False, "error": {"code": "not_trusted", "message": "Device is not trusted."}}
         host = trusted.get("last_host")
         if not host:
+            _progress("failed", error_code="unknown_host", error_message="No known host for this device.")
             return {"ok": False, "error": {"code": "unknown_host", "message": "No known host for this device."}}
         source = Path(file_path)
         if not source.is_file():
+            _progress("failed", error_code="file_not_found", error_message="File not found.")
             return {"ok": False, "error": {"code": "file_not_found", "message": "File not found."}}
         file_size = source.stat().st_size
         if file_size == 0:
+            _progress("failed", error_code="empty_file", error_message="File is empty.")
             return {"ok": False, "error": {"code": "empty_file", "message": "File is empty."}}
         if file_size > MAX_FILE_BYTES:
+            _progress("failed", error_code="file_too_large", error_message=f"File exceeds {MAX_FILE_BYTES} bytes.")
             return {"ok": False, "error": {"code": "file_too_large", "message": f"File exceeds {MAX_FILE_BYTES} bytes."}}
 
+        _progress("preparing", bytes_sent=0, total_bytes=file_size)
         stop_event = threading.Event()
-        file_port, server_thread = self._serve_file_tls(source, stop_event)
+        file_port, server_thread, _serve_state = self._serve_file_tls(source, stop_event, progress_callback=_progress)
         if file_port is None:
+            _progress("failed", error_code="file_server_failed", error_message="Could not start file server.")
             return {"ok": False, "error": {"code": "file_server_failed", "message": "Could not start file server."}}
 
-        self._write_event("share_send_attempt", {"device_id": device_id, "host": host, "file": source.name, "size": file_size, "port": file_port})
+        self.events.write_event("share_send_attempt", {"device_id": device_id, "host": host, "file": source.name, "size": file_size, "port": file_port})
 
+        # Try persistent connection first (avoids new TCP+TLS handshake)
+        with self.data_lock:
+            peer_link = self.peer_connections.get(device_id)
+        if peer_link is not None:
+            try:
+                share = {
+                    "type": PACKET_SHARE_REQUEST,
+                    "body": {
+                        "filename": source.name,
+                        "numberOfFiles": 1,
+                        "totalPayloadSize": file_size,
+                    },
+                    "payloadSize": file_size,
+                    "payloadTransferInfo": {"port": file_port},
+                }
+                peer_link["send_queue"].put(self._encode_packet(share))
+                self.events.write_event("share_send_via_persistent", {"device_id": device_id, "file": source.name, "size": file_size, "port": file_port})
+                self._set_diagnostic("last_share_send", {"device_id": device_id, "file": source.name, "size": file_size, "time": int(time.time()), "via": "persistent"})
+                _progress("waiting_peer", bytes_sent=0, total_bytes=file_size)
+                server_thread.join(timeout=90)
+                if server_thread.is_alive():
+                    self._cleanup_file_server(stop_event, server_thread)
+                    _record_send_failure("transfer_timeout", "File transfer timed out.", bytes_sent=int(_serve_state.get("bytes_sent") or 0), total_bytes=file_size, via="persistent")
+                    _progress("failed", error_code="transfer_timeout", error_message="File transfer timed out.")
+                    return {"ok": False, "error": {"code": "transfer_timeout", "message": "File transfer timed out."}}
+                if not _serve_state.get("accepted"):
+                    _record_send_failure("transfer_timeout", "Peer did not connect to download the file.", bytes_sent=0, total_bytes=file_size, via="persistent")
+                    _progress("failed", error_code="transfer_timeout", error_message="Peer did not connect to download the file.")
+                    return {"ok": False, "error": {"code": "transfer_timeout", "message": "Peer did not connect to download the file."}}
+                if not _transfer_completed(_serve_state, file_size):
+                    result = _transfer_incomplete_error(_serve_state, file_size)
+                    _record_send_failure("transfer_incomplete", result["error"]["message"], bytes_sent=result["bytes_sent"], total_bytes=file_size, via="persistent")
+                    _progress("failed", bytes_sent=result["bytes_sent"], total_bytes=file_size, error_code="transfer_incomplete", error_message=result["error"]["message"])
+                    return result
+                _progress("finished", bytes_sent=_serve_state.get("bytes_sent", file_size), total_bytes=file_size)
+                return {"ok": True, "file": source.name, "size": file_size}
+            except Exception as exc:
+                self.events.write_event("share_send_persistent_failed", {"device_id": device_id, "error": str(exc)})
+
+        # Fallback: create a new connection
         try:
+            _progress("connecting", bytes_sent=0, total_bytes=file_size)
             interfaces = self._network_interfaces()
             source_ips = self._source_ips_for_host(host, interfaces)
-            source_ip = source_ips[0] if source_ips else None
-            raw = socket.create_connection((host, 1716), timeout=5, source_address=(source_ip, 0) if source_ip else None)
+            raw = self._connect_to_peer_control_socket(host, trusted, source_ips)
+            if raw is None:
+                self._cleanup_file_server(stop_event, server_thread)
+                _record_send_failure("tcp_connect_failed", "Could not connect to phone.", stage="tcp", host=host)
+                _progress("failed", error_code="peer_unreachable", error_message="Could not connect to phone.")
+                return {"ok": False, "error": {"code": "peer_unreachable", "message": "Could not connect to phone."}}
         except OSError:
             self._cleanup_file_server(stop_event, server_thread)
+            _record_send_failure("tcp_connect_failed", "Could not connect to phone.", stage="tcp", host=host)
+            _progress("failed", error_code="peer_unreachable", error_message="Could not connect to phone.")
             return {"ok": False, "error": {"code": "peer_unreachable", "message": "Could not connect to phone."}}
 
         try:
-            hello = self._identity_packet()
+            _progress("announcing", bytes_sent=0, total_bytes=file_size)
+            hello = self._identity_packet(target_device_id=device_id)
             raw.sendall(self._encode_packet(hello))
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
+            # Match TLS role to peer device type (same logic as _connect_to_peer)
+            device_type = str(trusted.get("device_type") or "").lower()
+            tls_mode = self._peer_tls_mode(device_type)
+            use_tls_client = tls_mode == "client"
+            if use_tls_client:
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+            else:
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                context.verify_mode = ssl.CERT_NONE
             context.load_cert_chain(str(self.cert_path), str(self.key_path))
-            tls = context.wrap_socket(raw, server_hostname=device_id, server_side=False, do_handshake_on_connect=True)
+            tls = None
+            tls = context.wrap_socket(
+                raw,
+                server_hostname=device_id if use_tls_client else None,
+                server_side=not use_tls_client,
+                do_handshake_on_connect=True,
+            )
+
+            # Post-TLS identity exchange (with timeout protection)
+            tls.settimeout(5)
+            try:
+                tls.sendall(self._encode_packet(self._identity_packet(target_device_id=device_id)))
+                peer_secure = self._read_tls_packet(tls)
+                if peer_secure.get("type") == PACKET_IDENTITY:
+                    peer_body = peer_secure.get("body") or {}
+                    self._remember_trusted_device_metadata(device_id, host, peer_body, connected=True)
+                    self.events.write_event("share_send_peer_identity", {"device_id": device_id, "device_name": peer_body.get("deviceName")})
+            except (socket.timeout, OSError):
+                self.events.write_event("share_send_no_peer_identity", {"device_id": device_id, "host": host})
 
             share = {
                 "type": PACKET_SHARE_REQUEST,
                 "body": {
                     "filename": source.name,
-                    "payloadSize": file_size,
                     "numberOfFiles": 1,
+                    "totalPayloadSize": file_size,
                 },
+                "payloadSize": file_size,
                 "payloadTransferInfo": {"port": file_port},
             }
             tls.sendall(self._encode_packet(share))
-            self._write_event("share_send_sent", {"device_id": device_id, "file": source.name, "size": file_size, "port": file_port})
+            self.events.write_event("share_send_sent", {"device_id": device_id, "file": source.name, "size": file_size, "port": file_port})
             self._set_diagnostic("last_share_send", {"device_id": device_id, "file": source.name, "size": file_size, "time": int(time.time())})
 
             server_thread.join(timeout=60)
             if server_thread.is_alive():
                 self._cleanup_file_server(stop_event, server_thread)
+                _record_send_failure("transfer_timeout", "File transfer timed out.", bytes_sent=int(_serve_state.get("bytes_sent") or 0), total_bytes=file_size)
+                _progress("failed", error_code="transfer_timeout", error_message="File transfer timed out.")
                 return {"ok": False, "error": {"code": "transfer_timeout", "message": "File transfer timed out."}}
+            if not _serve_state.get("accepted"):
+                _record_send_failure("transfer_timeout", "Peer did not connect to download the file.", bytes_sent=0, total_bytes=file_size)
+                _progress("failed", error_code="transfer_timeout", error_message="Peer did not connect to download the file.")
+                return {"ok": False, "error": {"code": "transfer_timeout", "message": "Peer did not connect to download the file."}}
+            if not _transfer_completed(_serve_state, file_size):
+                result = _transfer_incomplete_error(_serve_state, file_size)
+                _record_send_failure("transfer_incomplete", result["error"]["message"], bytes_sent=result["bytes_sent"], total_bytes=file_size)
+                _progress("failed", bytes_sent=result["bytes_sent"], total_bytes=file_size, error_code="transfer_incomplete", error_message=result["error"]["message"])
+                return result
 
+            _progress("finished", bytes_sent=_serve_state.get("bytes_sent", file_size), total_bytes=file_size)
             return {"ok": True, "file": source.name, "size": file_size}
         except Exception as exc:
             self._cleanup_file_server(stop_event, server_thread)
+            _record_send_failure("tls_send_failed", str(exc), stage="tls")
+            _progress("failed", error_code="send_failed", error_message=str(exc))
             return {"ok": False, "error": {"code": "send_failed", "message": str(exc)}}
         finally:
             try:
-                tls.close()
+                if tls is not None:
+                    tls.close()
+                elif raw is not None:
+                    raw.close()
             except Exception:
                 pass
 
-    def _serve_file_tls(self, file_path: Path, stop_event: threading.Event) -> tuple[Optional[int], threading.Thread]:
+    def _serve_file_tls(
+        self,
+        file_path: Path,
+        stop_event: threading.Event,
+        progress_callback: Optional[Callable[..., None]] = None,
+    ) -> tuple[Optional[int], threading.Thread, dict[str, Any]]:
+        """Start a background TLS server that streams a file to the requesting peer."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind(("0.0.0.0", 0))
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_BUFFER_BYTES)
         except OSError:
-            return None, threading.Thread()
-        port = sock.getsockname()[1]
-        sock.listen(1)
-        sock.settimeout(5)
-
-        def _serve() -> None:
-            data = b""
+            pass
+        state: dict[str, Any] = {"accepted": False, "completed": False, "bytes_sent": 0}
+        # KDE Connect payload ports: 1739-1764
+        bound = False
+        for payload_port in range(1739, 1765):
             try:
-                data = file_path.read_bytes()
+                sock.bind(("0.0.0.0", payload_port))
+                bound = True
+                break
+            except OSError:
+                continue
+        if not bound:
+            # Fallback to ephemeral port
+            try:
+                sock.bind(("0.0.0.0", 0))
+                bound = True
             except OSError:
                 pass
-            if not data:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-                return
+        if not bound:
+            return None, threading.Thread(), state
+        port = sock.getsockname()[1]
+        sock.listen(3)
+        sock.settimeout(20)
+
+        def _serve() -> None:
+            conn = None
+            tls_sock = None
+            last_progress_time = 0.0
+            last_progress_bytes = 0
+
+            def _report_progress(force: bool = False) -> None:
+                nonlocal last_progress_time, last_progress_bytes
+                if not progress_callback:
+                    return
+                now = time.monotonic()
+                sent = int(state.get("bytes_sent") or 0)
+                if (
+                    force
+                    or sent - last_progress_bytes >= SEND_PROGRESS_MIN_BYTES
+                    or now - last_progress_time >= SEND_PROGRESS_MIN_INTERVAL_SECONDS
+                ):
+                    progress_callback("transferring", bytes_sent=sent, total_bytes=file_size)
+                    last_progress_time = now
+                    last_progress_bytes = sent
+
             try:
-                conn, _ = sock.accept()
-            except (OSError, socket.timeout):
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-                return
-            try:
-                context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                context.verify_mode = ssl.CERT_NONE
-                context.load_cert_chain(str(self.cert_path), str(self.key_path))
-                tls_sock = context.wrap_socket(conn, server_side=True, do_handshake_on_connect=True)
-                tls_sock.settimeout(30)
-                tls_sock.sendall(data)
+                if not file_path.is_file():
+                    return
+                file_size = file_path.stat().st_size
+                if file_size > MAX_FILE_BYTES:
+                    self.events.write_event("file_serve_aborted", {"file": str(file_path), "reason": "file_too_large", "size": file_size})
+                    return
+                # Accept with retry — allow up to 3 connection attempts
+                for attempt in range(3):
+                    if stop_event.is_set():
+                        return
+                    try:
+                        conn, _ = sock.accept()
+                        state["accepted"] = True
+                        _report_progress(force=True)
+                    except socket.timeout:
+                        self.events.write_event("file_serve_accept_timeout", {"file": str(file_path), "attempt": attempt + 1})
+                        conn = None
+                        continue
+                    except OSError:
+                        conn = None
+                        return
+                    # TLS handshake
+                    try:
+                        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                        context.verify_mode = ssl.CERT_NONE
+                        context.load_cert_chain(str(self.cert_path), str(self.key_path))
+                        conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        try:
+                            conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SOCKET_BUFFER_BYTES)
+                        except OSError:
+                            pass
+                        tls_sock = context.wrap_socket(conn, server_side=True, do_handshake_on_connect=True)
+                        tls_sock.settimeout(30)
+                        break  # TLS handshake succeeded
+                    except (OSError, ssl.SSLError) as exc:
+                        self.events.write_event("file_serve_tls_handshake_failed", {"file": str(file_path), "attempt": attempt + 1, "error": str(exc)})
+                        try:
+                            conn.close()
+                        except OSError:
+                            pass
+                        conn = None
+                        tls_sock = None
+                        continue
+                if conn is None or tls_sock is None:
+                    return
+                with file_path.open("rb") as f:
+                    while not stop_event.is_set():
+                        chunk = f.read(FILE_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        tls_sock.sendall(chunk)
+                        state["bytes_sent"] += len(chunk)
+                        _report_progress()
+                state["completed"] = True
+                _report_progress(force=True)
                 try:
                     tls_sock.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass
-                tls_sock.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                self.events.write_event("file_serve_error", {"file": str(file_path), "error": str(exc)})
             finally:
+                try:
+                    if tls_sock is not None:
+                        tls_sock.close()
+                    elif conn is not None:
+                        conn.close()
+                except OSError:
+                    pass
                 try:
                     sock.close()
                 except OSError:
@@ -1685,13 +1885,36 @@ class KDEckKdeReceiver:
 
         thread = threading.Thread(target=_serve, daemon=True)
         thread.start()
-        return port, thread
+        return port, thread, state
 
     def _cleanup_file_server(self, stop_event: threading.Event, thread: threading.Thread) -> None:
         stop_event.set()
         thread.join(timeout=2)
 
+    # ------------------------------------------------------------------
+    # Public API wrappers (for tests and backend facade)
+    # ------------------------------------------------------------------
+
+    def flush_events(self) -> None:
+        self.events.flush()
+
+    def _write_event(self, event: str, details: dict[str, Any]) -> None:
+        """Backward-compatible delegate to ``EventLogger.write_event``."""
+        self.events.write_event(event, details)
+
+    def _tail_events(self, limit: int) -> list[dict[str, Any]]:
+        """Backward-compatible delegate to ``EventLogger.tail``."""
+        return self.events.tail(limit)
+
+    def write_trusted_devices(self, data: dict[str, Any]) -> None:
+        self._write_trusted_devices(data)
+
+    def trusted_devices(self) -> dict[str, Any]:
+        return self._trusted_devices()
+
+    def _connect_to_peer_control_socket(self, host: str, trusted_info: dict[str, Any], source_ips: list[Optional[str]]) -> Optional[socket.socket]:
+        return _connect_to_peer_control_socket_standalone(host, trusted_info, source_ips)
+
     def _log(self, message: str, *args: Any) -> None:
         if self.logger:
             self.logger.info(message, *args)
-

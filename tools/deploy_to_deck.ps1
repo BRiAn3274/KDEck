@@ -1,9 +1,10 @@
 # KDEck 一键部署到 Steam Deck (Windows PowerShell)
-# 用法: .\tools\deploy_to_deck.ps1 -DeckIp 10.70.21.37
+# 用法: .\tools\deploy_to_deck.ps1 -DeckIp <deck-ip>
 # 前提: Deck 已开启 SSH (桌面模式 → Konsole → sudo systemctl start sshd)
 
 param(
-    [string]$DeckIp = "10.70.21.37",
+    [Parameter(Mandatory = $true)]
+    [string]$DeckIp,
     [string]$DeckUser = "deck"
 )
 

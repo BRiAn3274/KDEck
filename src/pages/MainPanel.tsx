@@ -5,17 +5,20 @@ import {
   Router,
   TextField,
 } from "@decky/ui";
-import { callable } from "@decky/api";
-import { useRef, useState } from "react";
+import { callable, injectCssIntoTab, removeCssFromTab } from "@decky/api";
+import { useEffect, useRef, useState } from "react";
 import type { ApiResult, ManagedKde, Notebook } from "../types";
 import { text } from "../i18n";
 import {
   deviceState,
   formatFileSummary,
   formatIp,
+  infoRowStyle,
+  infoTextStyle,
   resultMessage,
+  statusDotStyle,
 } from "../utils";
-import { DeviceRow, TextRow } from "../components";
+import { TextRow } from "../components";
 import { useToast } from "../hooks/useToast";
 import { useConnection } from "../hooks/useConnection";
 import { useClipboard } from "../hooks/useClipboard";
@@ -24,9 +27,23 @@ const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
 
 const ACTION_COOLDOWN_MS = 700;
 
+const clipboardCss = `
+  .kdeck-clipboard-input input {
+    width: 100%; box-sizing: border-box; text-align: left;
+    padding: 7px 10px !important; font-size: 15px !important;
+    font-weight: 400; line-height: 20px;
+  }
+`;
+
 export default function MainPanel() {
   const toast = useToast();
   const { summary, refresh } = useConnection(toast);
+
+  useEffect(() => {
+    injectCssIntoTab("kdeck-clipboard", clipboardCss);
+    return () => removeCssFromTab("kdeck-clipboard", clipboardCss);
+  }, []);
+
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [task, setTask] = useState("");
   const lastActionAtRef = useRef(0);
@@ -70,63 +87,79 @@ export default function MainPanel() {
       : text.receiverStarting;
   const device = deviceState(summary.managed_kde);
   const connection = task || managedStatus;
-  const btStatus = summary.managed_kde?.bt_working ? text.btReady
-    : summary.managed_kde?.bt_error ? text.btUnavailable
-    : text.btDisabled;
+  const connectedDevices = device.trustedList.filter((d) => d.connected);
+  const deviceSummary = connectedDevices.length > 0
+    ? connectedDevices.map((d) => d.name).join(" / ")
+    : (receiverReady ? device.label : text.disconnected);
+  const transferSummary = connectedDevices.length > 0
+    ? `${text.targetDevice}: ${connectedDevices.map((d) => d.name).join(" / ")}`
+    : text.noDeviceConnected;
+  const hasReceiverError = Boolean(
+    summary.managed_kde?.paused ||
+    summary.managed_kde?.error ||
+    !summary.managed_kde?.running ||
+    !summary.managed_kde?.udp_working ||
+    !summary.managed_kde?.tcp_working
+  );
 
   return (
     <>
       <PanelSection title={text.connection}>
+        {hasReceiverError && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={busyAction === text.restartReceiver} onClick={() => run(text.restartReceiver, async () => startManagedKde(), true)}>
+              {busyAction === text.restartReceiver ? connection : text.restartReceiver}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busyAction === text.refreshConnection} onClick={() => run(text.refreshConnection, async () => startManagedKde(), true)}>
-            {busyAction === text.refreshConnection ? connection : text.refreshConnection}
-          </ButtonItem>
+          <div style={{ ...infoRowStyle, gap: "8px" }}>
+            <span style={{ ...infoTextStyle, flex: 1 }}>
+              {deviceSummary}
+            </span>
+            <span style={statusDotStyle(Boolean(receiverReady && device.connected))} />
+          </div>
         </PanelSectionRow>
-        <DeviceRow label={receiverReady ? device.label : text.disconnected} connected={Boolean(receiverReady && device.connected)} />
         <TextRow label="Deck IP" value={formatIp(summary.deck_ips?.primary)} />
-        <TextRow label="Bluetooth" value={btStatus} />
       </PanelSection>
 
       <PanelSection title={text.clipboard}>
         <PanelSectionRow>
-          <style>{`
-            .kdeck-clipboard-input {
-              width: 100%; box-sizing: border-box; padding: 7px 10px !important;
-              font-size: 15px !important; font-weight: 400 !important;
-              line-height: 20px !important; text-align: left !important;
-            }
-          `}</style>
           <TextField
-            {...({ "aria-label": text.clipboard, className: "kdeck-clipboard-input" } as any)}
+            aria-label={text.clipboard}
+            className="kdeck-clipboard-input"
             value={clipboard.clipboardText}
             disabled={!!busyAction}
             onBlur={clipboard.handleBlur}
             onFocus={clipboard.handleFocus}
             onChange={(e) => clipboard.handleChange(e?.target?.value ?? "")}
-            onKeyDown={clipboard.handleClipboardEnter as any}
+            onKeyDown={clipboard.handleClipboardEnter}
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <div onDoubleClick={() => clipboard.executeHiddenCommand()}>
-            <ButtonItem
-              layout="below"
-              disabled={!!busyAction || !clipboard.clipboardText}
-              onClick={() => run(text.syncText, clipboard.syncClipboard)}
-            >
-              {text.syncText}
-            </ButtonItem>
-          </div>
+          <ButtonItem
+            layout="below"
+            disabled={!!busyAction || !clipboard.clipboardText}
+            onClick={() => run(text.syncText, clipboard.syncClipboard)}
+          >
+            {text.syncText}
+          </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
-      <PanelSection title={text.receiveFile}>
-        <TextRow label={text.file} value={formatFileSummary(summary.managed_kde?.last_file, summary.incoming_directories?.items)} />
-      </PanelSection>
-      <PanelSection title={text.sendFile}>
+      <PanelSection title={text.transferFiles}>
         <PanelSectionRow>
-          <ButtonItem layout="below" onClick={() => { try { Router.Navigate("/kdeck/send"); } catch (_) { window.location.hash = "/kdeck/send"; } }}>
+          <ButtonItem layout="below" description={transferSummary} onClick={() => {
+            try {
+              Router.CloseSideMenus();
+              Router.Navigate("/kdeck/send/screenshots");
+            } catch (_) {
+              window.location.hash = "/kdeck/send/screenshots";
+            }
+          }}>
             {text.sendFile}
           </ButtonItem>
         </PanelSectionRow>
+        <TextRow label={text.file} value={formatFileSummary(summary.managed_kde?.last_file, summary.incoming_directories?.items)} />
       </PanelSection>
     </>
   );

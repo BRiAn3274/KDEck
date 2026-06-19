@@ -2,6 +2,7 @@ export type ApiResult = {
   ok?: boolean;
   message?: string;
   path?: string;
+  job?: SendJob;
   error?: {
     code?: string;
     message?: string;
@@ -73,8 +74,11 @@ export type ManagedKde = {
   paused?: boolean;
   pause_reason?: string | null;
   discovered_devices?: ManagedDevice[];
+  peer_connections?: Record<string, { host?: string }>;
   trusted_devices?: Record<string, unknown>;
   last_events?: ManagedEvent[];
+  last_state_transition?: ManagedStateTransition | null;
+  connection_states?: Record<string, ManagedConnectionState>;
   last_file?: ManagedFile | null;
   error?: {
     code?: string;
@@ -92,8 +96,25 @@ export type ManagedDevice = {
 export type ManagedEvent = {
   time?: number;
   event?: string;
+  stage?: string;
+  device_id?: string;
   file?: string;
   length?: number;
+};
+
+export type ManagedStateTransition = {
+  device_id?: string;
+  from?: string;
+  to?: string;
+  reason?: string;
+  time?: number;
+};
+
+export type ManagedConnectionState = {
+  device_id?: string;
+  state?: string;
+  reason?: string;
+  time?: number;
 };
 
 export type ManagedFile = {
@@ -110,10 +131,65 @@ export type SendableFile = {
   size: number;
   mtime: number;
   app_id?: string;
+  app_name?: string;
+  source?: string;
+  summary?: string;
+  kind?: string;
+  recommended?: boolean;
 };
 
 export type SendableFileList = {
   ok?: boolean;
   files?: SendableFile[];
   message?: string;
+};
+
+export type ThumbnailResponse = {
+  ok?: boolean;
+  data?: string;
+  mime?: string;
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
+export type SendTarget = {
+  id: string;
+  name: string;
+  type?: string;
+  connected?: boolean;
+  last_seen?: number;
+};
+
+export type SendTargetList = {
+  ok?: boolean;
+  preferred_device_id?: string | null;
+  devices?: SendTarget[];
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
+export type SendJob = {
+  job_id: string;
+  device_id?: string;
+  file_path?: string;
+  file_name?: string;
+  total_bytes?: number;
+  bytes_sent?: number;
+  phase?: string;
+  status?: string;
+  speed_bps?: number;
+  eta_seconds?: number | null;
+  error_code?: string;
+  error_message?: string;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type SendJobList = {
+  ok?: boolean;
+  jobs?: SendJob[];
 };

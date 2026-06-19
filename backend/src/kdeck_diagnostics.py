@@ -2,10 +2,40 @@
 
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Optional
 
 import kdeck_config as config
+
+DIAGNOSTIC_MESSAGES = {
+    "certificate_init_failed": "KDEck receiver could not initialize its certificate.",
+    "discovery_udp_bind_failed": "KDEck could not bind the UDP discovery port.",
+    "tcp_listener_bind_failed": "KDEck could not bind a KDE Connect TCP listener port.",
+    "tcp_connect_failed": "Device was found, but TCP connection failed.",
+    "tcp_connect_timeout": "Device was found, but TCP connection timed out.",
+    "tls_handshake_failed": "Device connected, but the secure session could not be established.",
+    "transfer_timeout": "The device did not request the file payload in time.",
+    "transfer_incomplete": "The device did not receive the full file.",
+}
+
+
+def diagnostic_error(code: str, stage: str, message: str, **details: Any) -> dict[str, Any]:
+    """Build a structured diagnostic error payload."""
+    return {
+        "code": code,
+        "stage": stage,
+        "message": message,
+        "time": int(time.time()),
+        **details,
+    }
+
+
+def diagnostic_message(code: Optional[str]) -> Optional[str]:
+    """Return a user-readable English fallback message for a diagnostic code."""
+    if not code:
+        return None
+    return DIAGNOSTIC_MESSAGES.get(code)
 
 
 async def build_status(daemon, run_fn) -> dict[str, Any]:
@@ -17,6 +47,7 @@ async def build_status(daemon, run_fn) -> dict[str, Any]:
     bus_path = Path(env["XDG_RUNTIME_DIR"]) / "bus"
     daemon_running = await daemon.is_daemon_running()
     dbus_ready = await daemon.is_dbus_service_ready()
+    daemon_pids = await _kdeconnectd_pids(run_fn)
 
     return {
         "ok": bool(cli_path and daemon_running and dbus_ready),
@@ -28,6 +59,7 @@ async def build_status(daemon, run_fn) -> dict[str, Any]:
             "found": bool(daemon_path),
             "path": daemon_path,
             "running": daemon_running,
+            "pids": daemon_pids,
         },
         "dbus": {
             "bus_path": str(bus_path),
@@ -67,23 +99,26 @@ class KDEckDiagnostics:
         selected = reachable[0] if reachable else (paired[0] if paired else None)
 
         if not status["kdeconnect_cli"]["found"]:
-            connection = "组件缺失"
+            connection_code = "missing_component"
         elif not status["kdeconnectd"]["found"]:
-            connection = "组件缺失"
+            connection_code = "missing_component"
         elif not status["kdeconnectd"]["running"]:
-            connection = "未启动"
+            connection_code = "not_started"
         elif not status["dbus"]["service_ready"]:
-            connection = "启动中"
+            connection_code = "starting"
         elif selected and selected.get("reachable") is False:
-            connection = f"{selected['name']} 不可达"
+            connection_code = "unreachable"
         elif selected:
-            connection = f"{selected['name']} 就绪"
+            connection_code = "ready"
         else:
-            connection = "未连接"
+            connection_code = "not_connected"
+
+        connection_device = selected["name"] if selected else None
 
         return {
             "ok": status["ok"],
-            "connection": connection,
+            "connection": connection_code,
+            "connection_device": connection_device,
             "status": status,
             "devices": devices,
             "selected_device": selected,
@@ -99,22 +134,27 @@ class KDEckDiagnostics:
         problems: list[dict[str, str]] = []
 
         if not status["kdeconnect_cli"]["found"]:
-            problems.append({"code": "missing_cli", "message": "找不到 kdeconnect-cli，无法通过命令行控制 KDE Connect。"})
+            problems.append({"code": "missing_cli", "message": "kdeconnect-cli not found, cannot control KDE Connect via CLI."})
         if not status["kdeconnectd"]["found"]:
-            problems.append({"code": "missing_daemon", "message": "找不到 kdeconnectd，系统 KDE Connect 后台组件不完整。"})
+            problems.append({"code": "missing_daemon", "message": "kdeconnectd not found, KDE Connect daemon is incomplete."})
         if not status["dbus"]["bus_exists"]:
-            problems.append({"code": "missing_dbus", "message": "/run/user/1000/bus 不存在，当前 deck 用户会话 DBus 不可用。"})
+            problems.append({"code": "missing_dbus", "message": "/run/user/1000/bus does not exist, session DBus is unavailable."})
         if status["kdeconnectd"]["found"] and not status["kdeconnectd"]["running"]:
-            problems.append({"code": "daemon_stopped", "message": "kdeconnectd 未运行，可以由 KDEck 后端尝试拉起。"})
+            problems.append({"code": "daemon_stopped", "message": "kdeconnectd is not running, KDEck backend can attempt to start it."})
+        if len(status["kdeconnectd"].get("pids") or []) > 0 and self.kde_receiver.status().get("running"):
+            problems.append({
+                "code": "official_daemon_conflict",
+                "message": "kdeconnectd is running while KDEck managed receiver is active; this can steal KDE Connect traffic on port 1716.",
+            })
         if status["kdeconnectd"]["running"] and not status["dbus"]["service_ready"]:
-            problems.append({"code": "dbus_service_unavailable", "message": "kdeconnectd 进程存在，但 org.kde.kdeconnect DBus 服务未就绪。"})
+            problems.append({"code": "dbus_service_unavailable", "message": "kdeconnectd process exists but org.kde.kdeconnect DBus service is not ready."})
         if devices["ok"] and not devices["paired"]:
-            problems.append({"code": "no_paired_device", "message": "当前没有已配对设备，需要先从可用设备列表发起配对。"})
+            problems.append({"code": "no_paired_device", "message": "No paired device found, pair a device from the available list first."})
         explicit_reachability = [d["reachable"] for d in devices["paired"] if d["reachable"] is not None]
         if devices["ok"] and explicit_reachability and not any(explicit_reachability):
             problems.append({
                 "code": "paired_not_reachable",
-                "message": "已有配对设备，但没有设备可达。常见原因是热点/AP 隔离、VPN 路由或两端不在同一网络。",
+                "message": "Paired devices exist but none are reachable. Common causes: AP isolation, VPN routing, or different networks.",
             })
 
         return {
@@ -124,9 +164,9 @@ class KDEckDiagnostics:
             "network": network,
             "problems": problems,
             "hints": [
-                "KDE Connect 使用 TCP/UDP 端口 1714-1764。",
-                "手机热点、访客 Wi-Fi、AP 隔离会导致设备互相不可见。",
-                "EasyTier、ZeroTier、Tailscale 等组网软件可能改变路由，设备可见性需要实测。",
+                "KDE Connect uses TCP/UDP ports 1714-1764.",
+                "Mobile hotspots, guest Wi-Fi, and AP isolation can prevent device discovery.",
+                "EasyTier, ZeroTier, Tailscale and similar tools may alter routing; device visibility must be tested empirically.",
             ],
         }
 
@@ -173,24 +213,46 @@ class KDEckDiagnostics:
             "recent_clipboard": bool(status.get("last_clipboard")),
             "recent_file": bool(status.get("last_file")),
         }
-        if checks["paused"]:
+        last_problem = status.get("last_payload_error") or status.get("last_tls_error") or status.get("last_connect_error") or status.get("last_error")
+        last_state_transition = status.get("last_state_transition")
+        connection_states = status.get("connection_states") if isinstance(status.get("connection_states"), dict) else {}
+        if isinstance(last_problem, dict):
+            problem_code = last_problem.get("code")
+            problem_message = diagnostic_message(problem_code) or last_problem.get("message")
+        else:
+            problem_code = None
+            problem_message = None
+
+        if problem_code == "transfer_timeout":
+            state = "transfer_timeout"
+            message = problem_message or "The device did not request the file payload in time."
+        elif problem_code == "transfer_incomplete":
+            state = "transfer_incomplete"
+            message = problem_message or "The device did not receive the full file."
+        elif problem_code and last_problem and last_problem.get("stage") == "tls":
+            state = "tls_error"
+            message = problem_message or "Secure session failed."
+        elif problem_code and last_problem and last_problem.get("stage") == "tcp":
+            state = "tcp_error"
+            message = problem_message or "TCP connection failed."
+        elif checks["paused"]:
             state = "paused_desktop_mode"
-            message = "桌面模式运行中，KDEck receiver 已暂停。"
+            message = "Desktop mode is active, KDEck receiver is paused."
         elif not checks["desired"]:
             state = "disabled"
-            message = "KDEck receiver 未被请求启动。"
+            message = "KDEck receiver was not requested to start."
         elif not checks["udp"] or not checks["tcp"]:
             state = "listener_unready"
-            message = "KDEck receiver 正在启动或监听失败。"
+            message = "KDEck receiver is starting up or listener failed."
         elif not checks["recent_discovery"]:
             state = "waiting_discovery"
-            message = "KDEck receiver 正在监听，尚未收到外部设备 discovery。"
+            message = "KDEck receiver is listening, no external device discovery received yet."
         elif checks["paired"]:
             state = "paired"
-            message = "KDEck receiver 已有可信设备，可接收剪贴板和文件。"
+            message = "KDEck receiver has trusted devices, ready for clipboard and file transfer."
         else:
             state = "discovered_unpaired"
-            message = "KDEck receiver 已发现设备，等待配对或可信连接。"
+            message = "KDEck receiver discovered devices, awaiting pairing or trusted connection."
         return {
             "state": state,
             "message": message,
@@ -204,6 +266,11 @@ class KDEckDiagnostics:
             "last_pair": status.get("last_pair"),
             "last_reannounce_targets": status.get("last_reannounce_targets"),
             "last_payload_error": status.get("last_payload_error"),
+            "last_state_transition": last_state_transition,
+            "connection_states": connection_states,
+            "last_problem": last_problem,
+            "problem_code": problem_code,
+            "problem_message": problem_message,
         }
 
 
@@ -250,3 +317,21 @@ def _parse_device_line(line: str) -> Optional[dict[str, Any]]:
         "reachable": reachable,
         "state": state,
     }
+
+
+async def _kdeconnectd_pids(run_fn) -> list[int]:
+    if run_fn is None:
+        return []
+    try:
+        result = await run_fn(["pgrep", "-u", config.deck_user(), "-x", "kdeconnectd"], timeout=5)
+    except Exception:
+        return []
+    if not getattr(result, "ok", False):
+        return []
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        try:
+            pids.append(int(line.strip()))
+        except ValueError:
+            continue
+    return pids

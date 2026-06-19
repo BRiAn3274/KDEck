@@ -1,60 +1,30 @@
 """KDEck network utilities — interface discovery, IP classification, and sorting."""
 
-import ipaddress
 import json
 import socket
-from typing import Any, Optional
+from typing import Any
 
-IGNORED_INTERFACE_PREFIXES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "mihomo", "clash")
+from kdeck_kde_network import (
+    interface_path_type,
+    interface_priority,
+    is_ignored_interface,
+    is_usable_ipv4,
+)
+from kdeck_kde_protocol import (
+    IGNORED_INTERFACE_PREFIXES,
+    INTERFACE_PRIORITIES,
+)
 
-INTERFACE_PRIORITIES = {
-    "lan": 100,
-    "easytier": 80,
-    "zerotier": 70,
-    "tailscale": 60,
-    "vpn": 40,
-    "other": 10,
-}
-
-
-def interface_path_type(name: str) -> str:
-    """Classify a network interface name into a path type."""
-    clean = (name or "").lower()
-    if clean.startswith(("wlan", "wl", "en", "eth")):
-        return "lan"
-    if clean.startswith("et_"):
-        return "easytier"
-    if clean.startswith("zt"):
-        return "zerotier"
-    if clean.startswith(("tailscale", "tailscale0")):
-        return "tailscale"
-    if clean.startswith(("tun", "tap", "ppp")):
-        return "vpn"
-    return "other"
-
-
-def interface_priority(name: str) -> int:
-    """Return a priority score for a network interface."""
-    return INTERFACE_PRIORITIES.get(interface_path_type(name), 10)
-
-
-def is_usable_ipv4(address: Optional[str]) -> bool:
-    """Return True if the IPv4 address is usable for KDE Connect discovery."""
-    if not address:
-        return False
-    try:
-        ip = ipaddress.ip_address(address)
-    except ValueError:
-        return False
-    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-        return False
-    return ip not in ipaddress.ip_network("198.18.0.0/15")
-
-
-def is_ignored_interface(name: str) -> bool:
-    """Return True if the interface should be excluded from KDE Connect."""
-    clean = (name or "").lower()
-    return clean.startswith(IGNORED_INTERFACE_PREFIXES)
+# Re-export for backward compatibility with code that imports from this module.
+__all__ = [
+    "IGNORED_INTERFACE_PREFIXES",
+    "INTERFACE_PRIORITIES",
+    "interface_path_type",
+    "interface_priority",
+    "is_usable_ipv4",
+    "is_ignored_interface",
+    "KDEckNetwork",
+]
 
 
 class KDEckNetwork:

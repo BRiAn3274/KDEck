@@ -45,8 +45,10 @@ class KDEckBackend:
         settings_dir: Optional[str] = None,
         runtime_dir: Optional[str] = None,
         log_dir: Optional[str] = None,
+        event_loop: Any = None,
     ):
         self.logger = logger
+        self.loop = event_loop
         self.settings_dir = Path(settings_dir or "/tmp/kdeck-settings")
         self.runtime_dir = Path(runtime_dir or "/tmp/kdeck-runtime")
         self.log_dir = Path(log_dir) if log_dir else None
@@ -94,6 +96,7 @@ class KDEckBackend:
             log_dir=self.log_dir,
             runtime_dir=self.runtime_dir,
         )
+        self.kde_receiver.on_file_received = self.file_manager.record_received_file
         self.diagnostics = KDEckDiagnostics(
             daemon=self.daemon,
             network=self.network,
@@ -126,9 +129,12 @@ class KDEckBackend:
         self._ensure_mode_monitor()
         if self._is_desktop_mode_active():
             self.managed_kde_pause_reason = "desktop_mode"
+            self.kde_receiver.set_connection_state(self.kde_receiver.device_id, "paused_desktop", "desktop_mode_active")
             self.kde_receiver.stop()
             return self.get_managed_kde_status()
         self.managed_kde_pause_reason = None
+        self.daemon.stop_user_daemons_sync("managed_receiver_start")
+        self.daemon.stop_managed_daemon_sync()
         result = self.kde_receiver.start()
         if result.get("running"):
             self.kde_receiver.reannounce_trusted_devices("start_managed_kde")
@@ -145,6 +151,7 @@ class KDEckBackend:
         desktop_mode = self._is_desktop_mode_active()
         if desktop_mode and status.get("running"):
             self.managed_kde_pause_reason = "desktop_mode"
+            self.kde_receiver.set_connection_state(self.kde_receiver.device_id, "paused_desktop", "desktop_mode_active")
         status["desktop_mode_active"] = desktop_mode
         status["desired"] = self.managed_kde_desired
         status["paused"] = self.managed_kde_pause_reason == "desktop_mode"
@@ -232,6 +239,9 @@ class KDEckBackend:
     # ------------------------------------------------------------------
 
     async def share_file(self, device_id: str, path: str) -> dict[str, Any]:
+        ready = await self.daemon.ensure_daemon()
+        if not ready["ok"]:
+            return ready
         return await self.file_manager.share_file(device_id, path)
 
     async def list_files(self, directory: str = "", limit: int = 200) -> dict[str, Any]:
@@ -251,6 +261,21 @@ class KDEckBackend:
 
     def send_file_to_phone(self, file_path: str, device_id: str) -> dict[str, Any]:
         return self.file_manager.send_file_to_phone(file_path, device_id)
+
+    def start_send_file_to_phone(self, file_path: str, device_id: str) -> dict[str, Any]:
+        return self.file_manager.start_send_file_to_phone(file_path, device_id)
+
+    def get_send_jobs(self, limit: int = 20) -> dict[str, Any]:
+        return self.file_manager.get_send_jobs(limit)
+
+    def start_send_diagnostic_bundle(self, device_id: str) -> dict[str, Any]:
+        bundle = self.export_logs()
+        if not bundle.get("ok") or not bundle.get("path"):
+            return bundle
+        return self.file_manager.start_send_file_to_phone(str(bundle["path"]), device_id)
+
+    def get_thumbnail_base64(self, path: str) -> dict[str, Any]:
+        return self.file_manager.get_thumbnail_base64(path)
 
     # ------------------------------------------------------------------
     # Network
@@ -274,25 +299,47 @@ class KDEckBackend:
     # ------------------------------------------------------------------
 
     def export_logs(self) -> dict[str, Any]:
-        self.kde_receiver._flush_event_buffer()
+        self.kde_receiver.flush_events()
         target_dir = self._log_export_dir()
         target = target_dir / f"kdeck-logs-{int(time.time())}.zip"
         with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            status_snapshot = self._redact_status_snapshot(self.get_managed_kde_status())
             manifest = {
                 "exported_at": int(time.time()),
-                "export_path": str(target),
-                "settings_dir": str(self.settings_dir),
-                "runtime_dir": str(self.runtime_dir),
-                "log_dir": str(self.log_dir) if self.log_dir else None,
-                "receiver": self.get_managed_kde_status(),
+                "export_name": target.name,
+                "settings_dir_name": self.settings_dir.name,
+                "runtime_dir_name": self.runtime_dir.name,
+                "log_dir_name": self.log_dir.name if self.log_dir else None,
+                "receiver": status_snapshot,
+                "event_log": self.kde_receiver.events.metadata(),
             }
             archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            archive.writestr("status-snapshot.json", json.dumps(status_snapshot, ensure_ascii=False, indent=2))
             for path in (self.daemon.daemon_log_path, self.daemon.daemon_pid_path):
                 if path.exists():
                     archive.write(path, arcname=f"runtime/{path.name}")
             for path in self._receiver_event_logs():
                 if path.exists():
-                    archive.write(path, arcname=f"managed-kde/{path.name}")
+                    archive.writestr(
+                        f"managed-kde/{path.name}",
+                        self._redacted_jsonl_file(
+                            path,
+                            {
+                                "device_id",
+                                "target_device_id",
+                                "host",
+                                "source_ip",
+                                "path",
+                                "file_path",
+                                "fingerprint",
+                                "cert",
+                                "key",
+                                "command",
+                                "stdout",
+                                "stderr",
+                            },
+                        ),
+                    )
             history_path = self.settings_dir / "transfer-history.jsonl"
             old_history = self.settings_dir / "transfer-history.json"
             if history_path.exists():
@@ -322,6 +369,7 @@ class KDEckBackend:
             ":kdeck logs": "Export redacted logs to Downloads.",
             ":kdeck export logs": "Export redacted logs to Downloads.",
             ":kdeck share logs": "Export logs and explain why direct reverse sending is not used.",
+            ":kdeck reset identity": "Clear KDEck managed KDE Connect identity and trusted-device data.",
             ":kdeck update <url>": "Download and install a new KDEck.zip from URL. Use for rapid development.",
         }
         if normalized == ":kdeck help":
@@ -347,9 +395,15 @@ class KDEckBackend:
             result = self.kde_receiver.reannounce_trusted_devices("hidden_command")
             result["message"] = "Trusted-device reannounce sent." if result.get("ok") else "Receiver TCP listener is not ready."
             return result
+        if normalized == ":kdeck reset identity":
+            result = self.reset_managed_kde_identity()
+            result["message"] = "KDEck identity and trusted-device data cleared. Restart KDEck and pair devices again." if result.get("ok") else "Failed to clear KDEck identity."
+            return result
         if normalized.startswith(":kdeck update "):
-            url = command.strip()[len(":kdeck update "):].strip()
-            return self.updater.update_from_url(url)
+            parts = command.strip()[len(":kdeck update "):].strip().split()
+            if len(parts) != 2 or not parts[0].startswith("https://") or len(parts[1]) != 64:
+                return self._error("invalid_update_command", "Usage: :kdeck update <https-url> <sha256-hex-64>")
+            return self.updater.update_from_url(parts[0], parts[1])
         return self._error("unknown_hidden_command", "Unknown hidden command.", command=command)
 
     # ------------------------------------------------------------------
@@ -366,7 +420,7 @@ class KDEckBackend:
                 pref_id = data.get("device_id")
             except (OSError, json.JSONDecodeError):
                 pass
-        trusted = self.kde_receiver._trusted_devices()
+        trusted = self.kde_receiver.trusted_devices()
         if pref_id and pref_id in trusted:
             return {"ok": True, "device_id": pref_id, "source": "user_preference"}
         # Auto-select first trusted device
@@ -375,11 +429,66 @@ class KDEckBackend:
             return {"ok": True, "device_id": auto_id, "source": "auto"}
         return {"ok": False, "device_id": None, "source": "none"}
 
+    def get_send_targets(self) -> dict[str, Any]:
+        """Return trusted devices formatted for the send page target picker."""
+        preferred = self.get_preferred_device()
+        status = self.kde_receiver.status()
+        trusted = status.get("trusted_devices") or {}
+        discovered = status.get("discovered_devices") or []
+        connected_ids = set((status.get("peer_connections") or {}).keys())
+        devices = []
+        for device_id, entry in trusted.items():
+            if not isinstance(entry, dict):
+                continue
+            live = next((item for item in discovered if item.get("device_id") == device_id), None)
+            name = (live or {}).get("device_name") or entry.get("device_name") or str(device_id)[:8]
+            devices.append({
+                "id": device_id,
+                "name": name,
+                "type": (live or {}).get("device_type") or entry.get("device_type"),
+                "connected": bool(device_id in connected_ids or live),
+                "last_seen": (live or {}).get("last_seen") or entry.get("last_seen") or entry.get("last_connected"),
+            })
+        devices.sort(key=lambda item: (not item.get("connected"), str(item.get("name") or "").lower()))
+        return {
+            "ok": True,
+            "preferred_device_id": preferred.get("device_id") if preferred.get("ok") else None,
+            "devices": devices,
+        }
+
     def set_preferred_device(self, device_id: str) -> dict[str, Any]:
         """Persist user's device preference."""
+        trusted = self.kde_receiver.trusted_devices()
+        if device_id not in trusted:
+            return self._error("not_trusted", "Device is not trusted.")
         pref_path = self.settings_dir / "preferred-device.json"
         pref_path.write_text(json.dumps({"device_id": device_id, "set_at": int(time.time())}), encoding="utf-8")
         return {"ok": True, "device_id": device_id}
+
+    def reset_managed_kde_identity(self, remove_preferred_device: bool = True) -> dict[str, Any]:
+        """Reset managed KDE identity material so the user can re-pair from scratch."""
+        removed: list[str] = []
+        for path in (
+            self.kde_receiver.device_id_path,
+            self.kde_receiver.cert_path,
+            self.kde_receiver.key_path,
+            self.kde_receiver.trusted_path,
+        ):
+            try:
+                if path.exists():
+                    path.unlink()
+                    removed.append(str(path))
+            except OSError as exc:
+                return self._error("reset_identity_failed", "Failed to reset managed KDE identity.", path=str(path), error=str(exc))
+        if remove_preferred_device:
+            pref_path = self.settings_dir / "preferred-device.json"
+            try:
+                if pref_path.exists():
+                    pref_path.unlink()
+                    removed.append(str(pref_path))
+            except OSError as exc:
+                return self._error("reset_identity_failed", "Failed to reset managed KDE identity.", path=str(pref_path), error=str(exc))
+        return {"ok": True, "removed": removed}
 
     # ------------------------------------------------------------------
     # Plugin lifecycle
@@ -387,7 +496,9 @@ class KDEckBackend:
 
     def cleanup_plugin_data(self, log_dir: Optional[str] = None) -> dict[str, Any]:
         removed = []
-        for path in (self.settings_dir, self.runtime_dir, Path(log_dir) if log_dir else None):
+        if self._is_owned_plugin_dir(self.settings_dir):
+            removed.extend(self._cleanup_settings_preserving_identity())
+        for path in (self.runtime_dir, Path(log_dir) if log_dir else None):
             if path and self._is_owned_plugin_dir(path):
                 shutil.rmtree(path, ignore_errors=True)
                 removed.append(str(path))
@@ -519,6 +630,7 @@ class KDEckBackend:
                 if status.get("running"):
                     if self.logger:
                         self.logger.info("KDEck receiver paused because Plasma desktop mode is active")
+                    self.kde_receiver.set_connection_state(self.kde_receiver.device_id, "paused_desktop", "desktop_mode_active")
                     self.kde_receiver.stop()
                 self.managed_kde_pause_reason = "desktop_mode"
                 continue
@@ -609,12 +721,22 @@ class KDEckBackend:
     def _redact_json(self, data: Any, redacted_keys: set[str]) -> Any:
         if isinstance(data, dict):
             return {
-                key: self._redacted_json_value(value) if key in redacted_keys else self._redact_json(value, redacted_keys)
+                key: self._redacted_json_value_for_key(key, value) if key in redacted_keys else self._redact_json(value, redacted_keys)
                 for key, value in data.items()
             }
         if isinstance(data, list):
             return [self._redact_json(item, redacted_keys) for item in data]
         return data
+
+    def _redacted_json_value_for_key(self, key: str, value: Any) -> str:
+        if key in {"host", "source_ip"}:
+            return "<redacted host>" if value else ""
+        if key == "command":
+            return "<redacted command>" if value else ""
+        if key in {"stdout", "stderr"}:
+            text = str(value or "")
+            return f"<redacted:{len(text)} chars>" if text else ""
+        return self._redacted_json_value(value)
 
     def _redacted_notebook(self) -> str:
         try:
@@ -628,7 +750,7 @@ class KDEckBackend:
     def _redacted_trusted_devices(self) -> Optional[dict[str, Any]]:
         if not (self.managed_kde_dir / "trusted-devices.json").exists():
             return None
-        trusted = self.kde_receiver._trusted_devices()
+        trusted = self.kde_receiver.trusted_devices()
         devices = []
         for device_id, value in trusted.items():
             item = value if isinstance(value, dict) else {}
@@ -641,6 +763,21 @@ class KDEckBackend:
             })
         return {"device_count": len(devices), "devices": devices}
 
+    def _redact_status_snapshot(self, status: dict[str, Any]) -> dict[str, Any]:
+        return self._redact_json(
+            status,
+            {
+                "device_id",
+                "target_device_id",
+                "host",
+                "source_ip",
+                "path",
+                "fingerprint",
+                "cert",
+                "key",
+            },
+        )
+
     def _is_owned_plugin_dir(self, path: Path) -> bool:
         try:
             resolved = path.resolve()
@@ -648,6 +785,48 @@ class KDEckBackend:
             return False
         name = resolved.name.lower()
         return name == "kdeck" or name.startswith("kdeck-")
+
+    def _cleanup_settings_preserving_identity(self) -> list[str]:
+        """清理可丢弃设置，同时保留重装后继承配对所需的身份数据。
+
+        这四个文件定义 KDEck 的 KDE Connect 身份和可信设备。
+        卸载时删除它们会导致手机或电脑必须取消配对后重新配对，
+        所以清理流程只保留这组身份文件，删除缓存和历史等可再生成数据。
+        """
+        preserved = {
+            self.kde_receiver.device_id_path.resolve(),
+            self.kde_receiver.cert_path.resolve(),
+            self.kde_receiver.key_path.resolve(),
+            self.kde_receiver.trusted_path.resolve(),
+        }
+        removed: list[str] = []
+        if not self.settings_dir.exists():
+            return removed
+        for path in sorted(self.settings_dir.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved in preserved:
+                continue
+            if path.is_dir():
+                try:
+                    next(path.iterdir())
+                except StopIteration:
+                    try:
+                        path.rmdir()
+                        removed.append(str(path))
+                    except OSError:
+                        pass
+                except OSError:
+                    pass
+            else:
+                try:
+                    path.unlink()
+                    removed.append(str(path))
+                except OSError:
+                    pass
+        return removed
 
     def _error(self, code: str, message: str, **details: Any) -> dict[str, Any]:
         if self.logger:

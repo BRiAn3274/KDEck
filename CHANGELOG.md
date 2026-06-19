@@ -1,5 +1,305 @@
 # Changelog
 
+## 0.9.6 - 2026-06-19
+
+- Added a low-risk trusted-device store migration helper that normalizes legacy `trusted-devices.json` entries with `device_id`, migrated metadata names, `schema_version`, and `migrated_at` while preserving unknown fields.
+- Kept trust behavior unchanged during migration: incomplete legacy records are not automatically upgraded into trusted `device_id` records.
+- Added structured diagnostic error helpers with stable `code`, `stage`, `message`, and timestamp fields.
+- Updated receiver diagnostics for UDP bind, TCP listener bind, outgoing TCP/TLS failures, certificate init failures, and send-transfer failures so status snapshots can identify where a problem occurred.
+- Improved managed receiver diagnostic summaries so transfer timeout/incomplete, TCP, and TLS errors surface as readable states and messages instead of generic connection failure.
+- Changed frontend send failures to show action-oriented recovery advice instead of raw low-level error codes or exception messages.
+- Normalized receiver events on write so each JSONL event has `event`, `stage`, `device_id`, and `time`, with path, command, certificate path, and fingerprint-style fields redacted.
+- Added rate limiting for repeated high-frequency event types such as `peer_connect_failed`, packet errors, and payload retries to reduce log spam during bad network conditions.
+- Added diagnostic export metadata for the fixed event-log policy and a redacted `status-snapshot.json` alongside `manifest.json`.
+- Added low-risk connection-state recording for `idle`, `discovered`, `trusted`, `connecting`, `connected`, `backoff`, `paused_desktop`, and `failed`; this records state changes only and does not change connection, pairing, TLS, or retry decisions.
+- Added `REAL_DEVICE_VALIDATION_MATRIX.zh-CN.md` covering overlay installs, pairing inheritance, send-page behavior, transfers, diagnostic logging, and state-machine validation on real hardware.
+- Added regression tests for trust migration safety and diagnostic-summary transfer error promotion.
+- Deferred higher-risk connection lifecycle work from the 0.9.6 note set, including per-device state tables, single-session enforcement, and retry backoff.
+- Updated the package version to `0.9.6`.
+
+## 0.9.5 - 2026-06-19
+
+- Moved the send-page target switcher back into the normal content flow under the right-side title, left-aligned at a normal width, so it is no longer pushed into the Steam/Decky top overlay.
+- Reduced send-job polling when idle: active transfers poll every 900 ms, idle pages poll every 3000 ms.
+- Internally refactored the send page while keeping the package version at `0.9.5`: `SendPage.tsx` now keeps routing, send-job state, and `SidebarNavigation` assembly.
+- Moved send-page UI pieces into `src/features/send/components/`, including device switching, file rows, thumbnails, save groups, and empty states.
+- Moved send-page pure helpers and shared types into `src/features/send/domain/`, including category metadata, device selection helpers, formatting, file grouping, and row styles.
+- Moved low-risk send-page state into `src/features/send/hooks/`: `useSendTargets` owns device list/preferred-device switching, and `useSendableFiles` owns category scanning and refresh.
+- Kept the 0.9.4 low-risk backend and packaging improvements, including automatic release builds, package-version validation, SHA256 output, external-library save metadata, broader librarycache icon matching, thumbnail-cache cleanup, and transfer-history trimming coverage.
+- Updated the package version to `0.9.5`.
+
+## 0.9.4 - 2026-06-19
+
+- Enhanced `tools/package_release.py`: release packaging now runs `pnpm build` by default, validates the packaged `package.json` version against the source version, supports Windows `pnpm.cmd`, handles `--skip-build` correctly, and prints SHA256.
+- Improved save metadata lookup by reading Steam `libraryfolders.vdf` so app names can be found from external Steam libraries as well as the default library.
+- Improved save thumbnail matching by accepting more Steam `librarycache` image naming patterns while still falling back to the existing placeholder when no icon exists.
+- Added cleanup for generated thumbnail-cache files using age/count limits to avoid long-term cache growth.
+- Added coverage for external-library save app names, loose librarycache icon matching, thumbnail-cache cleanup, and JSONL transfer-history trimming.
+- Adjusted the send-page header area for a closer visual alignment between the left title, right page title, device switcher, and first file row.
+- Updated the package version to `0.9.4`.
+
+## 0.9.3 - 2026-06-19
+
+- Fixed target-device switching when the preferred target is offline: if another trusted device is connected, the send page now switches to the connected target instead of requiring the offline device to come online first.
+- Removed duplicate category titles in the send-page content area and kept the `SidebarNavigation` native page title as the single title.
+- Moved the device switcher into the upper-right area formerly used by search and constrained its width.
+- Added save grouping by game/app: the Saves page now shows game rows first, and activating a game row expands the concrete save files beneath it without adding a second page.
+- Added optional `app_name` metadata for save files by reading Steam `appmanifest_*.acf`; the frontend prefers the game name and falls back to `App <id>`.
+- Continued to use Steam `librarycache` thumbnails for save/game rows when available.
+- Updated the package version to `0.9.3`.
+
+## 0.9.2 - 2026-06-19
+
+- Reworked the send page around Decky `SidebarNavigation`: the left category rail, selected state, and focus behavior are now handled by Decky's native sidebar component.
+- Removed the custom left rail, hand-written sidebar focus bridge, and low-use search bar.
+- Kept the right-side send experience: target device switching, file rows, thumbnails, inline progress, success feedback, and save thumbnails.
+- Preserved existing send-page routes by mapping screenshot, recording, save, and log routes into the new `SidebarNavigation` page state.
+- Avoided backend, discovery, pairing, TLS, and security changes in this frontend-focused release.
+- Updated the package version to `0.9.2`.
+
+## 0.9.1 - 2026-06-19
+
+- Narrowed the custom send-page sidebar from 268 px to 224 px and reduced category text/icon sizing to give more space to the file list.
+- Reworked the custom left-rail focus highlight into a simpler full-row highlight closer to Decky styling, while keeping the existing custom layout for this release.
+- Extended the send-page background to the bottom of the viewport and kept an internal 68 px list safe area to reduce the visible gap above the Steam bottom menu.
+- Enabled the existing thumbnail API path for save files so saves can request Steam `librarycache` app icons when available.
+- Updated the package version to `0.9.1`.
+
+## 0.9.0 - 2026-06-19
+
+- Rebuilt the send page as a dedicated two-column send experience with categories for screenshots, recordings, saves, and logs.
+- Changed file sending to a single-file action model: pressing A on a file row sends that file directly, with no multi-select mode.
+- Reworked file rows in a DeckyMusic-inspired style with thumbnail/icon, filename, metadata, and a compact send action.
+- Added inline transfer feedback: running rows show a spinner and bottom progress bar; completed rows briefly show a check mark and full progress bar; failures show a toast.
+- Added screenshot and recording thumbnail loading through `get_thumbnail_base64`.
+- Improved target-device readability by showing device index and online/offline state, and made long filenames/metadata truncate safely so the send action stays visible.
+- Improved send-page empty/scanning/error states and added a friendlier `transfer_incomplete` frontend message.
+- Added a thumbnail request queue/cache on the frontend to limit concurrent thumbnail work.
+- Added low-risk backend support for Steam `librarycache` save thumbnails, while saves still fall back to placeholders when no icon is available.
+- Tightened the main panel send entry with more target/recent-file context and removed the unused `PreferredDeviceResponse` type.
+
+## 0.8.8 - 2026-06-11
+
+- KDEck now preserves managed KDE Connect identity, certificate, and trusted-device data on uninstall, so overlay installs or reinstalls can inherit existing pairings; an explicit identity reset API is available for users who want to clear pairings.
+- Reworked the send-page route entry to match DeckyClash: KDEck now registers only the `/kdeck/send` base route, while `/kdeck/send/screenshots` and related child paths are interpreted inside the send page. This avoids competing same-prefix route registrations.
+- Restored `Router.CloseSideMenus()` before entering the fullscreen send page from the main panel, matching DeckyClash's fullscreen page navigation and fixing the 0.8.7 case where the stretched main panel could still open silently.
+- Added explicit B/cancel handling on the send page: KDEck first asks Steam to go back, then tries to reopen the Decky QAM tab so the user does not land on the plugin store/settings page.
+- Updated the frontend build marker to `KDEck v0.8.8 build marker` for on-device bundle verification.
+
+## 0.8.7 - 2026-06-10
+
+- Fixed the 0.8.6 route regression: removed the incorrect `/kdeck` fullscreen route so `/kdeck/send/...` is no longer captured by the home route and rendered as a stretched main panel.
+- Removed the send page's custom B/cancel navigation to `/kdeck`, restoring Decky's default route stack behavior.
+- Stopped calling `Router.CloseSideMenus()` before entering the send page from the main panel, reducing the chance of breaking the QAM return stack.
+
+## 0.8.6 - 2026-06-10
+
+- Fixed send-page controller left/right focus: the left category rail and right content area now explicitly hand focus to each other with horizontal navigation, while up/down remains local to each area.
+- Fixed send-page back behavior: cancel/back now navigates to the KDEck plugin home route instead of returning to the plugin store/settings page.
+- Replaced the send-page target-device and send actions with compact custom Focusable buttons to reduce visual weight and match the page style.
+- Reworked the Logs page diagnostics action to use the same compact button style instead of Decky's large default button.
+- Narrowed the left rail further and moved the KDEck title plus send-page content lower to reduce top clipping.
+- Added backend `get_send_targets()` for a single send-target API with target names, connection state, and preferred device.
+- Added trusted-device validation to `set_preferred_device()` so invalid targets are not persisted.
+- Expanded backend tests to 60 cases, covering send target listing and preferred-device validation.
+
+## 0.8.5 - 2026-06-10
+
+- Removed the device selector from the main connection section. The main panel now only shows a connected-device summary, while send-target selection lives on the send page.
+- The receiver recovery button now appears only when the receiver is stopped, UDP/TCP is unhealthy, desktop mode pauses the receiver, or an error is present.
+- Reworked the send-page bottom bar into a compact `selected count/size + target device + send` layout and removed the low-value Clear button.
+- Added send-page target-device selection from trusted devices. The page prefers the saved user target, then connected devices, and persists changes via preferred device storage.
+- Added grouped save display by App/source/parent directory. Group rows show file count, total size, and recent modification time; expanding a group reveals concrete save files.
+- Narrowed the left rail and moved the send-page title, search bar, and content lower to reduce top clipping and bottom obstruction.
+
+## 0.8.4 - 2026-06-10
+
+- Fully bypassed SidebarNavigation's content title layer on the send page and replaced it with a KDEck-owned two-column layout, avoiding duplicate category titles from the current SteamOS implementation.
+- Moved critical layout to React inline styles, including the left navigation, content header/search row, file rows, thumbnail sizing, scroll region, and bottom safe area. The send page no longer depends on `<style>` or `injectCssIntoTab` being accepted by Decky.
+- Added the `KDEck v0.8.4 build marker` so the installed custom inline-layout bundle can be verified on-device.
+
+## 0.8.3 - 2026-06-10
+
+- Fixed duplicate titles on the send page: the left navigation title now only shows `KDEck`, while each category page renders one content-area title and hides SidebarNavigation's built-in page title.
+- Fixed search placement: the search field now sits in the right content header next to the active category title instead of inside the left navigation title area.
+- Reduced the risk of SteamOS bottom-bar obstruction: the send page now uses a fixed content header, a scrollable file list, and a 108px bottom safe area.
+- Improved send-page states: scan failures now show an explicit empty state; selected counts are based on the full current category rather than the current search filter.
+- Improved transfer summaries: the bottom transfer summary now only counts running jobs that belong to the current category.
+- Updated the frontend build marker to `KDEck v0.8.3 build marker` so the installed bundle can be verified on-device.
+
+## 0.8.2 - 2026-06-10
+
+- Send page architecture overhaul: each tab (Screenshots/Recordings/Logs/Saves) is now an independent self-managing component (DeckyClash pattern), each owning its file list, thumbnails, and job polling — permanently fixes the SidebarNavigation cache-related page-switch bug.
+- Search bar moved from left navigation area to right content area header; each tab renders its own title and search field.
+- Added multi-select: clicking a file row toggles selection; bottom bar shows count, total size, and batch "Send to device" action.
+- File rows use a compact horizontal layout: 96×54 thumbnail/icon area, two-line text (filename + metadata), right-side select/status area.
+- Metadata display simplified per category: screenshots/recordings show size and time; logs add source; saves show source or App ID.
+- Removed "Recommended" label prefix from file names.
+- Unified copy to "Send to device" instead of "Send to phone".
+- Added 96px bottom safe-area padding to prevent content from being obscured by SteamOS bottom hint bar.
+- Empty state ("No files" / "Scanning files…") is now centered in the right content area.
+- Routes now pass explicit `initialPage` prop, keeping category and URL in sync.
+- Active transfers show inline progress bar, speed, and ETA in file rows; bottom bar shows aggregate transfer summary.
+
+## 0.8.1 - 2026-06-10
+
+- Reworked the send-file page around Decky/community UI components: `SidebarNavigation`, `PanelSection`, `Focusable`, `Dropdown`, `ButtonItem`, and `ProgressBarWithInfo`.
+- Added background send jobs for Deck-to-device file transfer. The new job state reports phase, bytes sent, total bytes, speed, ETA, and final error details without blocking the page.
+- Added real transfer progress reporting from the TLS file server loop, replacing the previous purely animated progress indicator.
+- Added log source metadata and recommendations. The Logs category now prioritizes KDEck receiver, Decky plugin, KDE Connect daemon, and transfer-history logs with clear source and summary fields.
+- Added a "Send Diagnostics" action on the Logs page. It exports the existing redacted log bundle and sends that zip through the same tracked transfer job path.
+- Added file list sorting and filtering by recent time, size, name, and recommended items.
+- Added tests for send-job progress/result tracking and log metadata.
+- Fixed `activeJob` fallback showing stale completed/failed jobs when no transfer is running — now only shows running jobs.
+- Optimized `contentFor` to only render the active tab's content instead of building all four tab trees on every render.
+- Fixed thumbnail loading effect re-triggering on every `thumbnails` state update by using a ref for already-loaded checks.
+- Removed standalone "Current Task" panel — progress is now shown inline below each file row during transfer, saving screen space when idle.
+- Removed sort and filter dropdowns — files always sort by most recent; search bar remains in the title area.
+- Fixed page-switch blank content bug: all tabs now always receive full JSX content (never `null`), eliminating SidebarNavigation's cached-ref issue.
+- Added "Send Diagnostics" button on the Logs tab.
+- Fixed zip packaging: added missing `LICENSE`, `main.py`, and proper top-level `KDEck/` directory structure for Decky store import.
+- Reworked MainPanel device display: device name and status dot now reflect the selected device from the dropdown.
+
+## 0.8.0 - 2026-06-10
+
+- Fixed fallback TLS role in `send_share_request_to_peer`: when no persistent connection exists, the TLS client/server role is now correctly determined from the trusted device's `device_type` (Android peers → TLS client, desktop peers → TLS server), fixing file sends to non-Android devices.
+- Fixed reconnect loop silently giving up: `_connect_to_peer` now returns a boolean success indicator, and `_active_reconnect_loop` uses it to retry with exponential backoff (`RECONNECT_BASE_DELAY=2` → `RECONNECT_MAX_DELAY=60`) instead of relying on exceptions that were swallowed internally.
+- Fixed `EventLogger.tail` ordering: events from disk and in-memory buffer are now merged in chronological order (oldest first), preventing out-of-order display in the event log.
+- Added `PACKET_PING` to advertised capabilities and implemented a ping reply handler: incoming `kdeconnect.ping` packets from trusted peers now receive an immediate ping response, improving keepalive compatibility.
+- Fixed React anti-pattern in `MainPanel`: moved `setSelectedDevice` initialization from render phase into `useEffect` with a stable dependency on the trusted device list IDs.
+
+## 0.7.9 - 2026-06-10
+
+- Increased file transfer chunk size from 64 KB to 256 KB, reducing syscall overhead and improving throughput by ~20-30% on fast WiFi links.
+- Added `SO_RCVBUF` (1 MB) to payload receive sockets and `SO_SNDBUF` (1 MB) to file serve sockets, allowing the TCP window to fully utilize high-bandwidth WiFi connections.
+- Rewrote the file receive loop to use `recv_into()` with a pre-allocated buffer instead of `recv()`, eliminating per-chunk memory allocations and reducing GC pressure.
+- Renamed `FILE_SEND_CHUNK_BYTES` to `FILE_CHUNK_BYTES` to reflect that both send and receive paths now share the same chunk size.
+
+## 0.7.8 - 2026-06-10
+
+- Fixed SendPage category switching: removed `hideTitle: true` from all sidebar pages so the search bar stays visible when switching between screenshots/recordings/logs/saves. Removed the `category !== currentPage` guard in `contentFor` that caused stale empty state rendering, and added `key={category}` to `FileListContent` to force proper re-mount on tab change.
+- Fixed font inconsistency in the connection section: device name now uses `infoRowStyle` to match the font size/weight of "Deck IP" and other info rows.
+- Replaced `as any` cast on TextField `placeholder` prop with proper `InputHTMLAttributes<HTMLInputElement>` type.
+- Removed `as any` cast on `onKeyDown` handler — types now match natively.
+- Reduced clipboard input CSS `!important` declarations from 5 to 2, removing unnecessary overrides for `font-weight`, `line-height`, and `text-align`.
+
+## 0.7.7 - 2026-06-10
+
+- Extracted event logging subsystem into `kdeck_kde_events.py` (~116 lines): `EventLogger` class with buffered JSONL writes, auto-rotation, and tail reads; `KDEckKdeReceiver` now delegates all event operations via `self.events`.
+- Extracted trust management into `kdeck_kde_trust.py` (~104 lines): standalone `read_trusted_devices`, `write_trusted_devices`, `is_trusted_device`, and `remember_trusted_device_metadata` functions; receiver retains thin wrapper methods for test backward compatibility.
+- Extracted file-transfer utilities into `kdeck_kde_transfer.py` (~103 lines): standalone `safe_filename`, `unique_destination`, `has_enough_space`, `record_file_failure`, and `connect_to_peer_control_socket` functions.
+- `kdeck_kde_receiver.py` reduced from ~1760 to ~1660 lines; class now serves as an orchestrator delegating to six extracted modules.
+- Added one-line docstrings to 19 key public and lifecycle methods in `KDEckKdeReceiver`.
+- Replaced fixed reconnect delays `(1, 3, 8, 20)` with exponential backoff starting at 2s, doubling up to a 60s cap, for more resilient trusted-peer reconnection.
+- Added payload receive retry: up to 2 retries with 3s interval on connection or transfer failure; trust verification failures are not retried.
+- Replaced `openssl` CLI certificate generation with Python `cryptography` library as the primary method (cross-platform, no external tool dependency); `openssl` CLI retained as fallback for environments without `cryptography`.
+- All 56 tests pass (previously 1 failed on Windows due to OpenSSL entropy limitation, now resolved).
+- Version bumped to 0.7.7.
+
+## 0.7.6 - 2026-06-08
+
+- Moved search bar into `SidebarNavigation`'s `title` prop so it aligns with the built-in category title row; all pages now use `hideTitle: true`.
+- Replaced all 12 silent `.catch(() => undefined)` with descriptive `console.warn("[KDEck] ...")` calls across `useClipboard`, `useConnection`, `SendPage`, and `MainPanel`, making async errors visible in the browser console.
+- Replaced inline `<style>` tags with Decky's `injectCssIntoTab` / `removeCssFromTab` one-time CSS injection in both `SendPage` and `MainPanel`, preventing duplicate style injection on re-render.
+- Switched clipboard input CSS selector from `.kdeck-clipboard-input` to `.kdeck-clipboard-input input` for better specificity targeting the inner `<input>` element.
+- Extracted stateless protocol constants, packet codec, and identity builder from `kdeck_kde_receiver.py` into `kdeck_kde_protocol.py` (~134 lines).
+- Extracted network interface discovery, broadcast target computation, port binding, IP classification, and direct-target merging into `kdeck_kde_network.py` (~238 lines).
+- Extracted TLS certificate generation and peer fingerprint verification into `kdeck_kde_tls.py` (~78 lines).
+- Updated `kdeck_network.py` to import shared utilities from `kdeck_kde_network.py` and `kdeck_kde_protocol.py`, eliminating duplicate code.
+- `kdeck_kde_receiver.py` reduced from 1924 to ~1750 lines; class now delegates to extracted modules while preserving thin wrapper methods for backward compatibility and test mockability.
+- Added class-level docstring to `KDEckKdeReceiver` documenting module delegation architecture.
+- Added TCP `SO_KEEPALIVE` to all socket creation points: incoming TCP, incoming BT bridge, outgoing peer connect, payload receive, file serve accept, and send-fallback control socket.
+- Increased payload receive connection timeout from 15s to 30s for slower networks.
+- All 29 platform-applicable tests pass (1 test skipped due to Windows OpenSSL entropy limitation).
+- Version bumped to 0.7.6.
+
+## 0.7.5 - 2026-06-08
+
+- Added ref-based synchronous lock and 1-second cooldown to file send handler, preventing race-condition-driven duplicate sends from rapid touch clicks.
+- Upgraded toast notification system with per-category 3-second cooldown and automatic dismiss of previous toasts, eliminating notification spam from repeated actions.
+- Merged notification paths in `useConnection`: `notifyManagedEvents` now skips `file_receive_failed` when `notifyLastFile` already handles the same failure, fixing double-toast on file receive failure.
+- Replaced invasive `history.pushState`/`replaceState` monkey-patch with `SidebarNavigation`'s controlled `page` + `onPageRequested` + `identifier` API for tab switching.
+- Fixed render-phase `setState` anti-pattern: tab change now clears state in the `onPageRequested` callback instead of during render.
+- Implemented touch-screen anti-misclick: touch input requires 0.8-second long-press with visual animation ring to send; gamepad A button sends immediately via `Focusable.onActivate`.
+- Replaced `ButtonItem` with official `Focusable` component in file rows, using `focusWithinClassName` instead of `:focus-within` CSS selectors.
+- Removed Bluetooth status row from main panel (kept Deck IP for manual connection troubleshooting).
+- Added official `Dropdown` component for multi-device switching in main panel; removed redundant per-page `DeviceSelector` from send page.
+- Reduced `!important` CSS overrides from 12 to 4 by leveraging `Focusable` focus class and inline styles.
+- Removed dead code: `inputStyle`, `keyboardHint` i18n key, `device`/`status`/`btReady`/`btUnavailable`/`btDisabled` i18n keys, `DeviceRow`, `DeviceSelector`.
+- Added `PreferredDeviceResponse` type to eliminate `as any` on preferred device API call.
+- Fixed `TextField` `aria-label` and `className` props to use direct attributes instead of spread `as any`.
+- Version bumped to 0.7.5.
+
+## 0.7.4 - 2026-06-08
+
+- Added `kdeconnect.ping` packet type to capabilities and handler, responding to peer keepalive pings.
+- Added `SO_KEEPALIVE` with TCP keepalive tuning (idle=30s, interval=10s, count=3) matching KDE Connect C++ defaults, applied to all 6 socket creation points.
+- Fixed fallback TLS role in `send_share_request_to_peer`: changed `PROTOCOL_TLS_CLIENT` to `PROTOCOL_TLS_SERVER` with `server_side=True`, matching KDE Connect's TLS convention (TCP client = TLS server).
+- Fixed `_packet_payload_size` to accept `-1` (unknown size / infinite stream), a valid value in KDE Connect protocol.
+- Added timestamp to pair packet in `_accept_pair_inner` for protocol compliance.
+- Added post-TLS identity validation: peer device ID is now verified against the TLS certificate's Common Name after handshake.
+- Rewrote `_receive_share_request` with URL share support, `payloadSize=-1` stream handling, and threaded invocation from `_handle_packet`.
+- Routed `share_file` through the managed receiver instead of `kdeconnect-cli` for consistent protocol handling.
+- Version bumped to 0.7.4.
+
+## 0.7.1 - 2026-06-07
+
+- Fixed the managed receiver startup path to stop deck-user `kdeconnectd` before KDEck binds KDE Connect ports. This prevents the official daemon from stealing Windows file-transfer traffic while KDEck is active in game mode.
+- Added diagnostics for active `kdeconnectd` PIDs and a conflict warning when KDEck's managed receiver is running at the same time as the official daemon.
+- Added `tools/verify-release.ps1` to run Windows checks, WSL isolated-copy checks, release packaging, packaged-version verification, and SHA256 output before manual Deck installation.
+- Added regression coverage for stopping stale user daemons before the managed receiver starts.
+- Version bumped to 0.7.1.
+
+## 0.6.8 - 2026-06-07
+
+- Removed the duplicate send-page category heading. `SidebarNavigation` already renders the active page title, so KDEck no longer renders a second "Screenshots" title inside the page content.
+- Kept the search field compact and right-aligned under the built-in page title area.
+- Version bumped to 0.6.8.
+
+## 0.6.7 - 2026-06-07
+
+- Changed the QAM send-file entry to close Decky side menus before navigating to `/kdeck/send/screenshots`, matching the standalone route behavior used by DeckyClash and reducing back-button nesting.
+- Moved the send-page search field to the top-right of the category header, aligned with the current category title, and made it shorter and slimmer.
+- Increased thumbnail row spacing and changed thumbnail scale origin so selected thumbnails enlarge without crowding the filename.
+- Kept non-thumbnail categories as single-column rows so Logs and Saves do not inherit screenshot thumbnail indentation.
+- Version bumped to 0.6.7.
+
+## 0.6.6 - 2026-06-06
+
+- Fixed a game-mode isolation regression: starting the KDEck receiver now stops KDEck's plugin-owned `kdeconnectd`, preventing Windows KDE Connect from seeing both `KDEck` and the Deck's desktop `steamdeck` identity.
+- Removed the managed daemon watchdog path that could bring the official KDE Connect daemon back while the isolated receiver was active.
+- Relaxed send-page preflight for trusted devices: if a selected device is already trusted, KDEck now lets the backend attempt the real connection instead of blocking solely because discovery is older than 180 seconds.
+- Pairing records now store `last_seen` along with `last_connected`, improving trusted-device status consistency.
+- Version bumped to 0.6.6.
+
+## 0.6.5 - 2026-06-06
+
+- Rebuilt the send-file route around Decky `SidebarNavigation`, restoring the CDP-tested left sidebar page layout in source code.
+- Added the Saves route to the send page alongside Screenshots, Recordings, and Logs.
+- Added thumbnail RPC support for screenshots and recordings. Screenshots prefer existing Steam thumbnail files; recordings use an existing thumbnail when available or generate a cached frame with `ffmpeg` when present.
+- Merged the QAM "Received Files" and "Send File" sections into one "File Transfer" section, with the send button first and the recent received file row second.
+- Changed clipboard receive copy to device-neutral wording instead of assuming every peer is a phone.
+- Kept send-time connectivity validation: entering the send page does not require a connected target, but pressing a file to send validates the selected device.
+- Version bumped to 0.6.5.
+
+## 0.6.2 - 2026-06-06
+
+- Restored the send-file page to the full-screen split layout with a left category sidebar, right-side search, thumbnail list, selected-file enlargement, highlighted filename, and animated send progress bar.
+- Added the Saves category for common Steam userdata and Proton compatdata save-file candidates.
+- Changed Deck-to-phone file serving to stream files in chunks instead of reading the whole file into memory before sending.
+- Added public receiver APIs for flushing event logs and reading/writing trusted device state, so backend orchestration no longer calls those private receiver helpers directly.
+- Added tests for chunked TLS file serving and the receiver trusted-device public API.
+- Version bumped to 0.6.2.
+
+## 0.6.1 - 2026-06-06
+
+- Fixed the managed daemon watchdog so it uses the Decky event loop instead of an undefined backend field.
+- Fixed send-file connectivity validation to require the selected target device to be recently discovered.
+- Hardened the hidden update command: `:kdeck update` now requires HTTPS and a SHA256 checksum.
+- Fixed Bluetooth bridge startup to bind the local TCP bridge before launching the helper and avoid blocking forever while waiting for helper output.
+- Fixed `ruff check` formatting issues in `decky.pyi`.
+- Version bumped to 0.6.1.
+
 ## 0.6.0 - 2026-06-05
 
 - Keyboard input: replaced native `<input>` with `@decky/ui` `TextField` for clipboard and search inputs. The Steam Deck on-screen keyboard now works natively in both the QAM panel and the send-file route page, where `SteamClient.System` is unavailable.

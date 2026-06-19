@@ -47,8 +47,11 @@ class KDEckUpdater:
             url: HTTPS URL to a KDEck.zip file.
             expected_sha256: Optional SHA256 hex digest to verify the download.
         """
-        if not url.startswith(("http://", "https://")):
-            return self._error("invalid_update_url", "Only http/https URLs are allowed.")
+        if not url.startswith("https://"):
+            return self._error("invalid_update_url", "Only HTTPS URLs are allowed.")
+
+        if not expected_sha256:
+            return self._error("missing_checksum", "SHA256 checksum is required for security.")
 
         # Domain whitelist check
         if not self._validate_domain(url):
@@ -68,13 +71,12 @@ class KDEckUpdater:
                 return self._error("download_failed", f"Download failed: {exc}")
 
             # SHA256 verification
-            if expected_sha256:
-                actual_sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
-                if actual_sha256.lower() != expected_sha256.lower():
-                    return self._error(
-                        "checksum_mismatch",
-                        f"SHA256 mismatch. Expected: {expected_sha256[:16]}..., got: {actual_sha256[:16]}...",
-                    )
+            actual_sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+            if actual_sha256.lower() != expected_sha256.lower():
+                return self._error(
+                    "checksum_mismatch",
+                    f"SHA256 mismatch. Expected: {expected_sha256[:16]}..., got: {actual_sha256[:16]}...",
+                )
 
             # Validate zip structure
             if not zipfile.is_zipfile(zip_path):
@@ -92,6 +94,11 @@ class KDEckUpdater:
             script = tmp_dir / "install.sh"
 
             with zipfile.ZipFile(zip_path) as archive:
+                extract_dir_resolved = extract_dir.resolve()
+                for info in archive.infolist():
+                    target = (extract_dir / info.filename).resolve()
+                    if not str(target).startswith(str(extract_dir_resolved)):
+                        return self._error("invalid_zip", f"Zip entry escapes extract directory: {info.filename}")
                 archive.extractall(extract_dir)
 
             kdeck_dir = extract_dir / "KDEck"

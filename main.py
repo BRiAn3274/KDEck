@@ -23,6 +23,7 @@ class Plugin:
             settings_dir=getattr(decky, "DECKY_PLUGIN_SETTINGS_DIR", None),
             runtime_dir=getattr(decky, "DECKY_PLUGIN_RUNTIME_DIR", None),
             log_dir=getattr(decky, "DECKY_PLUGIN_LOG_DIR", None),
+            event_loop=self.loop,
         )
         self.backend.start_managed_kde()
         decky.logger.info("KDEck backend loaded")
@@ -30,6 +31,7 @@ class Plugin:
     async def _unload(self):
         if hasattr(self, "backend"):
             self.backend.stop_managed_kde()
+            await self.backend.stop_managed_daemon()
         decky.logger.info("KDEck backend unloaded")
 
     async def _uninstall(self):
@@ -47,98 +49,125 @@ class Plugin:
             os.path.join(getattr(decky, "DECKY_USER_HOME", "/home/deck"), ".local", "share", "kdeck")
         )
 
+    def _ensure_backend(self):
+        if not hasattr(self, "backend"):
+            raise RuntimeError("KDEck backend not initialized")
+        return self.backend
+
     async def get_status(self) -> dict:
-        return await self.backend.get_status()
+        return await self._ensure_backend().get_status()
 
     async def diagnose(self) -> dict:
-        return await self.backend.diagnose()
+        return await self._ensure_backend().diagnose()
 
     async def get_connection_summary(self) -> dict:
-        return await self.backend.get_connection_summary()
+        return await self._ensure_backend().get_connection_summary()
 
     async def start_managed_kde(self) -> dict:
-        return self.backend.start_managed_kde()
+        return self._ensure_backend().start_managed_kde()
 
     async def stop_managed_kde(self) -> dict:
-        return self.backend.stop_managed_kde()
+        return self._ensure_backend().stop_managed_kde()
 
     async def get_managed_kde_status(self) -> dict:
-        return self.backend.get_managed_kde_status()
+        return self._ensure_backend().get_managed_kde_status()
 
     async def ensure_daemon(self) -> dict:
-        return await self.backend.ensure_daemon()
+        return await self._ensure_backend().ensure_daemon()
 
     async def start_daemon(self) -> dict:
-        return await self.backend.start_daemon()
+        return await self._ensure_backend().start_daemon()
 
     async def stop_daemon(self) -> dict:
-        return await self.backend.stop_daemon()
+        return await self._ensure_backend().stop_daemon()
 
     async def restart_daemon(self) -> dict:
-        return await self.backend.restart_daemon()
+        return await self._ensure_backend().restart_daemon()
 
     async def refresh_devices(self) -> dict:
-        return await self.backend.refresh_devices()
+        return await self._ensure_backend().refresh_devices()
 
     async def list_devices(self) -> dict:
-        return await self.backend.list_devices()
+        return await self._ensure_backend().list_devices()
 
     async def pair_device(self, device_id: str) -> dict:
-        return await self.backend.pair_device(device_id)
+        return await self._ensure_backend().pair_device(device_id)
 
     async def unpair_device(self, device_id: str) -> dict:
-        return await self.backend.unpair_device(device_id)
+        return await self._ensure_backend().unpair_device(device_id)
 
     async def send_clipboard(self, device_id: str) -> dict:
-        return await self.backend.send_clipboard(device_id)
+        return await self._ensure_backend().send_clipboard(device_id)
 
     async def share_text(self, device_id: str, text: str) -> dict:
-        return await self.backend.share_text(device_id, text)
+        return await self._ensure_backend().share_text(device_id, text)
 
     async def get_clipboard(self, max_chars: int = 500) -> dict:
-        return await self.backend.get_clipboard(max_chars)
+        return await self._ensure_backend().get_clipboard(max_chars)
 
     async def set_clipboard(self, text: str) -> dict:
-        return await self.backend.set_clipboard(text)
+        return await self._ensure_backend().set_clipboard(text)
 
     async def share_file(self, device_id: str, path: str) -> dict:
-        return await self.backend.share_file(device_id, path)
+        return await self._ensure_backend().share_file(device_id, path)
 
     async def list_files(self, directory: str = "", limit: int = 200) -> dict:
-        return await self.backend.list_files(directory, limit)
+        return await self._ensure_backend().list_files(directory, limit)
 
     async def get_common_directories(self) -> dict:
-        return self.backend.get_common_directories()
+        return self._ensure_backend().get_common_directories()
 
     async def get_incoming_directories(self) -> dict:
-        return self.backend.get_incoming_directories()
+        return self._ensure_backend().get_incoming_directories()
 
     async def get_transfer_history(self, limit: int = 50) -> dict:
-        return self.backend.get_transfer_history(limit)
+        return self._ensure_backend().get_transfer_history(limit)
 
     async def get_deck_ips(self) -> dict:
-        return await self.backend.get_deck_ips()
+        return await self._ensure_backend().get_deck_ips()
 
     async def get_notebook(self) -> dict:
-        return self.backend.get_notebook()
+        return self._ensure_backend().get_notebook()
 
     async def save_notebook(self, text: str) -> dict:
-        return self.backend.save_notebook(text)
+        return self._ensure_backend().save_notebook(text)
 
     async def export_logs(self) -> dict:
-        return self.backend.export_logs()
+        return self._ensure_backend().export_logs()
 
     async def run_hidden_command(self, command: str) -> dict:
-        return self.backend.run_hidden_command(command)
+        return self._ensure_backend().run_hidden_command(command)
 
     async def list_sendable_files(self, category: str = "screenshots") -> dict:
-        return self.backend.list_sendable_files(category)
+        return self._ensure_backend().list_sendable_files(category)
 
     async def send_file_to_phone(self, file_path: str, device_id: str) -> dict:
-        return self.backend.send_file_to_phone(file_path, device_id)
+        return await self.loop.run_in_executor(
+            None, self._ensure_backend().send_file_to_phone, file_path, device_id
+        )
+
+    async def start_send_file_to_phone(self, file_path: str, device_id: str) -> dict:
+        return self._ensure_backend().start_send_file_to_phone(file_path, device_id)
+
+    async def get_send_jobs(self, limit: int = 20) -> dict:
+        return self._ensure_backend().get_send_jobs(limit)
+
+    async def start_send_diagnostic_bundle(self, device_id: str) -> dict:
+        return self._ensure_backend().start_send_diagnostic_bundle(device_id)
+
+    async def get_thumbnail_base64(self, path: str) -> dict:
+        return await self.loop.run_in_executor(
+            None, self._ensure_backend().get_thumbnail_base64, path
+        )
 
     async def get_preferred_device(self) -> dict:
-        return self.backend.get_preferred_device()
+        return self._ensure_backend().get_preferred_device()
+
+    async def get_send_targets(self) -> dict:
+        return self._ensure_backend().get_send_targets()
 
     async def set_preferred_device(self, device_id: str) -> dict:
-        return self.backend.set_preferred_device(device_id)
+        return self._ensure_backend().set_preferred_device(device_id)
+
+    async def reset_managed_kde_identity(self) -> dict:
+        return self._ensure_backend().reset_managed_kde_identity()

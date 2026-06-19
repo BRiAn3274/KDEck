@@ -65,7 +65,7 @@ export function useClipboard(toast: (body: string) => void, run: (label: string,
       skipNextBlurSaveRef.current = false;
       return;
     }
-    saveNotebook(clipboardTextRef.current).catch(() => undefined);
+    saveNotebook(clipboardTextRef.current).catch((e) => console.warn("[KDEck] saveNotebook failed:", e));
   };
 
   const handleFocus = () => { editingRef.current = true; };
@@ -80,7 +80,7 @@ export function useClipboard(toast: (body: string) => void, run: (label: string,
 
   const startTimer = () => {
     stopTimer();
-    timerRef.current = window.setInterval(() => pollReceivedClipboard().catch(() => undefined), CLIPBOARD_POLL_MS);
+    timerRef.current = window.setInterval(() => pollReceivedClipboard().catch((e) => console.warn("[KDEck] pollReceivedClipboard failed:", e)), CLIPBOARD_POLL_MS);
   };
 
   const stopTimer = () => {
@@ -92,15 +92,15 @@ export function useClipboard(toast: (body: string) => void, run: (label: string,
 
   useEffect(() => {
     mountedRef.current = true;
-    loadSavedClipboard().catch(() => undefined);
-    pollReceivedClipboard().catch(() => undefined);
+    loadSavedClipboard().catch((e) => console.warn("[KDEck] loadSavedClipboard failed:", e));
+    pollReceivedClipboard().catch((e) => console.warn("[KDEck] pollReceivedClipboard failed:", e));
     startTimer();
 
     const handleVisibility = () => {
       if (document.hidden) {
         stopTimer();
       } else {
-        pollReceivedClipboard().catch(() => undefined);
+        pollReceivedClipboard().catch((e) => console.warn("[KDEck] pollReceivedClipboard failed:", e));
         startTimer();
       }
     };

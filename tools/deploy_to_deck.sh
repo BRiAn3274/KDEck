@@ -5,7 +5,12 @@
 
 set -e
 
-DECK_IP="${1:-10.70.21.37}"
+if [ -z "${1:-}" ]; then
+    echo "用法: bash tools/deploy_to_deck.sh <deck-ip>" >&2
+    exit 2
+fi
+
+DECK_IP="$1"
 DECK_USER="deck"
 PLUGIN_DIR="/home/deck/homebrew/plugins/KDEck"
 ZIP_FILE="release/KDEck.zip"
