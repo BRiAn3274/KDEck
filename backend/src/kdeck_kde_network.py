@@ -114,7 +114,11 @@ def bind_available_tcp_port(
     lo = port_low if port_low is not None else TCP_PORT_MIN
     hi = port_mid if port_mid is not None else TCP_PORT_MAX
     last_error: Optional[OSError] = None
-    for port in range(lo, hi + 1):
+    ports = list(range(lo, hi + 1))
+    if lo <= UDP_PORT <= hi:
+        ports.remove(UDP_PORT)
+        ports.insert(0, UDP_PORT)
+    for port in ports:
         try:
             server.bind(("0.0.0.0", port))
             return port

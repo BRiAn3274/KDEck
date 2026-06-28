@@ -520,7 +520,6 @@ class KDEckFileManager:
         steam_root = config.deck_home() / ".local/share/Steam"
         roots: list[tuple[Path, str]] = []
         userdata = steam_root / "userdata"
-        compatdata = steam_root / "steamapps" / "compatdata"
 
         if userdata.is_dir():
             try:
@@ -536,7 +535,10 @@ class KDEckFileManager:
             except OSError:
                 pass
 
-        if compatdata.is_dir():
+        for steamapps in self._steamapps_roots():
+            compatdata = steamapps / "compatdata"
+            if not compatdata.is_dir():
+                continue
             try:
                 for app_id_dir in compatdata.iterdir():
                     if not app_id_dir.is_dir():

@@ -156,6 +156,11 @@ class KDEckBackend:
         status["diagnostic_summary"] = KDEckDiagnostics.receiver_diagnostic_summary(status)
         return status
 
+    def broadcast_discovery(self) -> dict[str, Any]:
+        result = self.kde_receiver.reannounce_trusted_devices("manual_discovery")
+        result["message"] = "KDEck discovery broadcast sent." if result.get("ok") else "KDEck receiver TCP listener is not ready."
+        return result
+
     # ------------------------------------------------------------------
     # Daemon lifecycle
     # ------------------------------------------------------------------
@@ -636,8 +641,10 @@ class KDEckBackend:
 
             # Daemon health watchdog: if the daemon was running and stops,
             # attempt auto-restart with exponential backoff.
-            daemon_running = self.daemon._read_managed_daemon_pid() is not None
-            if not daemon_running and daemon_failures < 3:
+            daemon_pid = self.daemon._read_managed_daemon_pid()
+            daemon_running = daemon_pid is not None and self.daemon._is_managed_kdeconnectd_pid(daemon_pid)
+            daemon_was_expected = daemon_pid is not None
+            if daemon_was_expected and not daemon_running and daemon_failures < 3:
                 daemon_failures += 1
                 if self.logger:
                     self.logger.warning("KDEck daemon watchdog detected daemon down (failure %d/3)", daemon_failures)

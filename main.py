@@ -14,6 +14,7 @@ from kdeck_backend import KDEckBackend  # noqa: E402
 class Plugin:
     async def _main(self):
         self.loop = asyncio.get_event_loop()
+        self._startup_task = None
         # Initialize config with Decky environment
         kdeck_config.init(
             user_home=getattr(decky, "DECKY_USER_HOME", None),
@@ -25,10 +26,24 @@ class Plugin:
             log_dir=getattr(decky, "DECKY_PLUGIN_LOG_DIR", None),
             event_loop=self.loop,
         )
-        self.backend.start_managed_kde()
         decky.logger.info("KDEck backend loaded")
+        self._startup_task = self.loop.create_task(self._start_managed_kde_after_decky_settles())
+
+    async def _start_managed_kde_after_decky_settles(self):
+        try:
+            await asyncio.sleep(3)
+            result = await self.loop.run_in_executor(None, self.backend.start_managed_kde)
+            if not result.get("ok", True):
+                decky.logger.warning("KDEck delayed receiver start returned non-ok result: %s", result)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            decky.logger.exception("KDEck delayed receiver start failed")
 
     async def _unload(self):
+        task = getattr(self, "_startup_task", None)
+        if task and not task.done():
+            task.cancel()
         if hasattr(self, "backend"):
             self.backend.stop_managed_kde()
             await self.backend.stop_managed_daemon()
@@ -71,6 +86,9 @@ class Plugin:
 
     async def get_managed_kde_status(self) -> dict:
         return self._ensure_backend().get_managed_kde_status()
+
+    async def broadcast_discovery(self) -> dict:
+        return self._ensure_backend().broadcast_discovery()
 
     async def ensure_daemon(self) -> dict:
         return await self._ensure_backend().ensure_daemon()

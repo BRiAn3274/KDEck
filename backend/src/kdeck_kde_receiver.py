@@ -615,6 +615,16 @@ class KDEckKdeReceiver:
         direct_targets = self._merge_direct_targets(direct_targets, self._trusted_direct_targets(interfaces))
         sent = 0
         failures = []
+        standard_socket_sent = 0
+        udp_socket = self.udp_socket
+        if udp_socket:
+            for _source_ip, address in targets:
+                try:
+                    udp_socket.sendto(payload, (address, UDP_PORT))
+                    sent += 1
+                    standard_socket_sent += 1
+                except OSError as exc:
+                    failures.append({"source": "0.0.0.0:1716", "target": address, "port": UDP_PORT, "error": str(exc)})
         for source_ip, address in targets:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
@@ -640,6 +650,7 @@ class KDEckKdeReceiver:
         details = {
             "reason": reason,
             "sent": sent,
+            "standard_socket_sent": standard_socket_sent,
             "failures": failures[:5],
             "targets": [{"source": source, "target": target} for source, target in targets],
             "direct_targets": [

@@ -1,8 +1,10 @@
+import asyncio
 import json
 import os
 import sys
 import tempfile
 import time
+import types
 import unittest
 import zipfile
 from pathlib import Path
@@ -16,6 +18,39 @@ from kdeck_file_manager import KDEckFileManager
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from package_release import REQUIRED_ZIP_ENTRIES, validate_release_zip
+
+
+class PluginStartupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_main_defers_managed_receiver_start(self):
+        fake_decky = types.SimpleNamespace(
+            DECKY_USER_HOME="/home/deck",
+            DECKY_PLUGIN_SETTINGS_DIR="/tmp/kdeck-settings",
+            DECKY_PLUGIN_RUNTIME_DIR="/tmp/kdeck-runtime",
+            DECKY_PLUGIN_LOG_DIR="/tmp/kdeck-logs",
+            logger=mock.Mock(),
+        )
+        previous_decky = sys.modules.get("decky")
+        sys.modules["decky"] = fake_decky
+        sys.modules.pop("main", None)
+        try:
+            import main
+
+            plugin = main.Plugin()
+            with mock.patch.object(main.KDEckBackend, "start_managed_kde", return_value={"ok": True}) as start:
+                await plugin._main()
+
+                start.assert_not_called()
+                self.assertTrue(hasattr(plugin, "backend"))
+                self.assertIsNotNone(plugin._startup_task)
+                plugin._startup_task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await plugin._startup_task
+        finally:
+            sys.modules.pop("main", None)
+            if previous_decky is None:
+                sys.modules.pop("decky", None)
+            else:
+                sys.modules["decky"] = previous_decky
 
 
 class DeviceListParserTests(unittest.TestCase):
@@ -136,6 +171,29 @@ class SendableFileScannerTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["files"][0]["app_name"], "External Game")
+
+    def test_saves_category_scans_external_steam_library_compatdata(self):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        root = Path(temp_dir.name)
+        external = root / "external-library"
+        save_dir = external / "steamapps/compatdata/987/pfx/drive_c/users/steamuser/Saved Games/Game"
+        libraryfolders = root / ".local/share/Steam/steamapps/libraryfolders.vdf"
+        manifest = external / "steamapps/appmanifest_987.acf"
+        save_dir.mkdir(parents=True)
+        libraryfolders.parent.mkdir(parents=True)
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        (save_dir / "profile.sav").write_bytes(b"save")
+        libraryfolders.write_text(f'"libraryfolders"\n{{\n  "1"\n  {{\n    "path" "{str(external).replace(chr(92), chr(92) + chr(92))}"\n  }}\n}}\n', encoding="utf-8")
+        manifest.write_text('"AppState"\n{\n    "appid" "987"\n    "name" "Compat Game"\n}\n', encoding="utf-8")
+        manager = self.make_manager(root)
+
+        with mock.patch("kdeck_config.deck_home", return_value=root):
+            result = manager.list_sendable_files("saves")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["files"][0]["app_id"], "987")
+        self.assertEqual(result["files"][0]["app_name"], "Compat Game")
 
     def test_thumbnail_base64_prefers_sibling_thumbnail(self):
         temp_dir = tempfile.TemporaryDirectory()
@@ -454,6 +512,21 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(backend.loop, loop)
 
+    async def test_watchdog_does_not_start_daemon_without_managed_pid(self):
+        loop = asyncio.get_running_loop()
+        backend = self.make_backend()
+        backend.loop = loop
+        backend.managed_kde_desired = True
+
+        with mock.patch.object(backend, "_is_desktop_mode_active", return_value=False), mock.patch.object(
+            backend.kde_receiver, "status", return_value={"running": True}
+        ), mock.patch.object(backend.daemon, "auto_restart_daemon", return_value={"ok": True}) as restart:
+            backend._ensure_mode_monitor()
+            await asyncio.sleep(5.2)
+            backend.stop_managed_kde()
+
+        restart.assert_not_called()
+
     async def test_managed_status_includes_diagnostic_summary(self):
         backend = self.make_backend()
         backend.managed_kde_desired = True
@@ -558,6 +631,16 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["ok"])
         reannounce.assert_called_once_with("hidden_command")
+
+    async def test_broadcast_discovery_reannounces_receiver_identity(self):
+        backend = self.make_backend()
+
+        with mock.patch.object(backend.kde_receiver, "reannounce_trusted_devices", return_value={"ok": True}) as reannounce:
+            result = backend.broadcast_discovery()
+
+        self.assertTrue(result["ok"])
+        self.assertIn("broadcast", result["message"].lower())
+        reannounce.assert_called_once_with("manual_discovery")
 
     async def test_get_send_targets_returns_trusted_devices_with_preference(self):
         backend = self.make_backend()

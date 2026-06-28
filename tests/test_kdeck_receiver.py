@@ -106,6 +106,16 @@ class ReceiverSecurityTests(unittest.TestCase):
         self.assertEqual(port, 18101)
         self.assertEqual(server.bind.call_args_list, [mock.call(("0.0.0.0", 18100)), mock.call(("0.0.0.0", 18101))])
 
+    def test_bind_available_tcp_port_prefers_kdeconnect_default_port(self):
+        receiver = self.make_receiver()
+
+        server = mock.Mock()
+        server.bind.return_value = None
+        port = receiver._bind_available_tcp_port(server)
+
+        self.assertEqual(port, 1716)
+        server.bind.assert_called_once_with(("0.0.0.0", 1716))
+
     def test_identity_packet_advertises_actual_tcp_port(self):
         receiver = self.make_receiver()
         receiver.tcp_port = 1739
@@ -115,6 +125,8 @@ class ReceiverSecurityTests(unittest.TestCase):
         self.assertEqual(packet["body"]["tcpPort"], 1739)
         self.assertEqual(packet["body"]["targetDeviceId"], "phone")
         self.assertEqual(packet["body"]["targetProtocolVersion"], 8)
+        self.assertIn("kdeconnect.pair", packet["body"]["incomingCapabilities"])
+        self.assertIn("kdeconnect.pair", packet["body"]["outgoingCapabilities"])
 
     def test_peer_connect_attempts_are_rate_limited(self):
         receiver = self.make_receiver()

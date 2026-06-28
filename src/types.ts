@@ -75,7 +75,7 @@ export type ManagedKde = {
   pause_reason?: string | null;
   discovered_devices?: ManagedDevice[];
   peer_connections?: Record<string, { host?: string }>;
-  trusted_devices?: Record<string, unknown>;
+  trusted_devices?: Record<string, ManagedTrustedDevice>;
   last_events?: ManagedEvent[];
   last_state_transition?: ManagedStateTransition | null;
   connection_states?: Record<string, ManagedConnectionState>;
@@ -91,6 +91,14 @@ export type ManagedDevice = {
   device_name?: string;
   host?: string;
   last_seen?: number;
+};
+
+export type ManagedTrustedDevice = {
+  device_name?: string;
+  device_type?: string;
+  last_seen?: number;
+  last_connected?: number;
+  last_host?: string;
 };
 
 export type ManagedEvent = {

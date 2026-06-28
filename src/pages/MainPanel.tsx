@@ -24,6 +24,7 @@ import { useConnection } from "../hooks/useConnection";
 import { useClipboard } from "../hooks/useClipboard";
 
 const startManagedKde = callable<[], ManagedKde>("start_managed_kde");
+const broadcastDiscovery = callable<[], ApiResult>("broadcast_discovery");
 
 const ACTION_COOLDOWN_MS = 700;
 
@@ -109,6 +110,17 @@ export default function MainPanel() {
           <PanelSectionRow>
             <ButtonItem layout="below" disabled={busyAction === text.restartReceiver} onClick={() => run(text.restartReceiver, async () => startManagedKde(), true)}>
               {busyAction === text.restartReceiver ? connection : text.restartReceiver}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
+        {!hasReceiverError && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={busyAction === text.broadcastDiscovery}
+              onClick={() => run(text.broadcastDiscovery, async () => broadcastDiscovery(), true)}
+            >
+              {busyAction === text.broadcastDiscovery ? connection : text.broadcastDiscovery}
             </ButtonItem>
           </PanelSectionRow>
         )}

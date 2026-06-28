@@ -22,6 +22,7 @@ FILES = (
 DIRECTORIES = ("dist", "assets", "defaults", "py_modules", "backend/src")
 EXCLUDED_DIR_NAMES = {"__pycache__"}
 EXCLUDED_SUFFIXES = (".map", ".pyc")
+EXCLUDED_FILES = {"backend/src/kdeck_updater.py"}
 REQUIRED_ZIP_ENTRIES = (
     "KDEck/plugin.json",
     "KDEck/package.json",
@@ -104,6 +105,8 @@ def main() -> int:
                 if source.suffix in EXCLUDED_SUFFIXES:
                     continue
                 relative = source.relative_to(ROOT).as_posix()
+                if relative in EXCLUDED_FILES:
+                    continue
                 archive.write(source, f"{PLUGIN_NAME}/{relative}")
 
     validate_release_zip(zip_path)

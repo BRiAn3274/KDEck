@@ -49,14 +49,23 @@ export const shortDeviceName = (name?: string) => {
 export const deviceState = (managed?: ManagedKde) => {
   const trusted = managed?.trusted_devices || {};
   const devices = managed?.discovered_devices || [];
+  const states = managed?.connection_states || {};
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  const isRecentlyActive = (time?: number) => Boolean(time && nowSeconds - time < 180);
+  const isUsableState = (state?: string) => state === "connected" || state === "trusted" || state === "backoff";
 
   // Build list of all trusted devices with names and connection status
   const trustedList = Object.keys(trusted).map((id) => {
     const device = devices.find((d) => d.device_id === id);
+    const trustedDevice = trusted[id];
+    const state = states[id];
+    const recentTrusted = isRecentlyActive(trustedDevice?.last_seen || trustedDevice?.last_connected);
+    const recentState = isUsableState(state?.state) && isRecentlyActive(state?.time);
     return {
       id,
-      name: shortDeviceName(device?.device_name || id.slice(0, 8)),
-      connected: !!device,
+      name: shortDeviceName(device?.device_name || trustedDevice?.device_name || id.slice(0, 8)),
+      connected: Boolean(device || recentState || recentTrusted),
     };
   });
 
@@ -67,6 +76,8 @@ export const deviceState = (managed?: ManagedKde) => {
   if (trustedDevice?.device_name) {
     return { label: shortDeviceName(trustedDevice.device_name), connected: true, trustedList };
   }
+  const activeTrustedDevice = trustedList.find((device) => device.connected);
+  if (activeTrustedDevice) return { label: activeTrustedDevice.name, connected: true, trustedList };
   if (managed?.paired) return { label: text.disconnected, connected: false, trustedList };
   const latest = devices[0];
   if (latest?.device_name) return { label: shortDeviceName(latest.device_name), connected: false, trustedList };

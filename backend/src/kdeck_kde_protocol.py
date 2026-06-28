@@ -24,6 +24,7 @@ PACKET_CLIPBOARD_CONNECT = "kdeconnect.clipboard.connect"
 PACKET_SHARE_REQUEST = "kdeconnect.share.request"
 PACKET_PING = "kdeconnect.ping"
 CAPABILITIES = [
+    PACKET_PAIR,
     PACKET_PING,
     PACKET_CLIPBOARD,
     PACKET_CLIPBOARD_CONNECT,
