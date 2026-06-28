@@ -295,7 +295,7 @@
 
 - Fixed the managed daemon watchdog so it uses the Decky event loop instead of an undefined backend field.
 - Fixed send-file connectivity validation to require the selected target device to be recently discovered.
-- Hardened the hidden update command: `:kdeck update` now requires HTTPS and a SHA256 checksum.
+- Removed the in-panel development update path from the store build; development deployment stays in local tools.
 - Fixed Bluetooth bridge startup to bind the local TCP bridge before launching the helper and avoid blocking forever while waiting for helper output.
 - Fixed `ruff check` formatting issues in `decky.pyi`.
 - Version bumped to 0.6.1.
@@ -314,7 +314,7 @@
 
 ## 0.5.6 - 2026-06-04
 
-- Major code refactor: backend split into modular files (`kdeck_daemon.py`, `kdeck_clipboard.py`, `kdeck_config.py`, `kdeck_network.py`, `kdeck_file_manager.py`, `kdeck_bt_helper.py`, `kdeck_diagnostics.py`, `kdeck_updater.py`). Frontend restructured into pages (`MainPanel.tsx`, `SendPage.tsx`), hooks (`useClipboard`, `useConnection`, `useToast`), components, and shared utilities.
+- Major code refactor: backend split into modular files (`kdeck_daemon.py`, `kdeck_clipboard.py`, `kdeck_config.py`, `kdeck_network.py`, `kdeck_file_manager.py`, `kdeck_bt_helper.py`, `kdeck_diagnostics.py`). Frontend restructured into pages (`MainPanel.tsx`, `SendPage.tsx`), hooks (`useClipboard`, `useConnection`, `useToast`), components, and shared utilities.
 - Send file entry: "Send File" button in the QAM sidebar navigates to a full-screen route page via Decky `routerHook`.
 - Daemon auto-restart: the managed daemon now auto-restarts on unexpected exits.
 - Bluetooth status display: the main panel shows Bluetooth connection status. Port exhaustion hint added to diagnostics.
@@ -327,7 +327,7 @@
 
 - Bluetooth support: RFCOMM server on channel 22 with SDP registration for PC/phone discovery. Reuses existing TLS + protocol handler. Graceful degradation.
 - Send file: full-screen page via Decky routerHook, three tabs (screenshots/recordings/logs). Accessible from Decky sidebar.
-- Dev deployment: `:kdeck update <url>` downloads and installs KDEck.zip. `tools/deploy_to_deck.ps1` for SSH deploy.
+- Dev deployment: `tools/deploy_to_deck.ps1` and `tools/deploy_to_deck.sh` provide local SSH deployment outside the store build.
 - Build: version injected from `package.json` via rollup. CI builds and uploads release artifact.
 - Fake client: `recv-file` command for reverse file transfer testing.
 - i18n: 6 send-file error codes in zh-CN and en.

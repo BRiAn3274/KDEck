@@ -296,7 +296,7 @@
 
 - 修复受管 daemon watchdog：改为使用 Decky 传入的事件循环，不再引用未定义的 backend 字段。
 - 修复发送文件前的在线校验：现在必须是当前选择的目标设备在最近 180 秒内被发现。
-- 加固隐藏更新命令：`:kdeck update` 现在要求 HTTPS 地址和 SHA256 校验和。
+- 从商店构建中移除面板内开发更新路径；开发部署保留在本地工具脚本中。
 - 修复蓝牙桥接启动：先绑定本地 TCP 桥接端口再启动 helper，并避免等待 helper 输出时无限阻塞。
 - 修复 `decky.pyi` 的 `ruff check` 格式问题。
 - 版本更新到 0.6.1。
@@ -315,7 +315,7 @@
 
 ## 0.5.6 - 2026-06-04
 
-- 大规模代码重构：后端拆分为模块文件（`kdeck_daemon.py`、`kdeck_clipboard.py`、`kdeck_config.py`、`kdeck_network.py`、`kdeck_file_manager.py`、`kdeck_bt_helper.py`、`kdeck_diagnostics.py`、`kdeck_updater.py`）。前端重构为页面（`MainPanel.tsx`、`SendPage.tsx`）、hooks（`useClipboard`、`useConnection`、`useToast`）、组件和共享工具函数。
+- 大规模代码重构：后端拆分为模块文件（`kdeck_daemon.py`、`kdeck_clipboard.py`、`kdeck_config.py`、`kdeck_network.py`、`kdeck_file_manager.py`、`kdeck_bt_helper.py`、`kdeck_diagnostics.py`）。前端重构为页面（`MainPanel.tsx`、`SendPage.tsx`）、hooks（`useClipboard`、`useConnection`、`useToast`）、组件和共享工具函数。
 - 发送文件入口：QAM 侧边栏"发送文件"按钮通过 Decky `routerHook` 跳转到全屏路由页面。
 - daemon 自动重启：受管 daemon 异常退出后会自动重启。
 - 蓝牙状态显示：主面板显示蓝牙连接状态，诊断信息新增端口耗尽提示。
@@ -328,7 +328,7 @@
 
 - 蓝牙支持：RFCOMM 通道 22 + SDP 服务注册，PC/手机可通过蓝牙发现并连接。复用现有 TLS + 协议处理，蓝牙不可用时自动降级。
 - 发送文件：全屏独立页面（Decky routerHook），三标签切换截图/录像/日志，从 Decky 侧边栏进入。
-- 开发部署：`:kdeck update <url>` 隐藏命令下载安装 zip。`tools/deploy_to_deck.ps1` SSH 一键部署。
+- 开发部署：`tools/deploy_to_deck.ps1` 和 `tools/deploy_to_deck.sh` 提供商店构建之外的本地 SSH 部署。
 - 构建：rollup 从 package.json 注入版本号。CI 自动构建并上传 artifact。
 - 假客户端：`recv-file` 命令反向测试文件传输。
 - i18n：6 个发送错误码中英文补全。

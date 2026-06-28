@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend" / "src"))
 from kdeck_backend import CommandResult, KDEckBackend
 from kdeck_diagnostics import KDEckDiagnostics, diagnostic_error, parse_device_list
 from kdeck_file_manager import KDEckFileManager
-from kdeck_updater import KDEckUpdater
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from package_release import REQUIRED_ZIP_ENTRIES, validate_release_zip
@@ -57,20 +56,6 @@ class DeviceListParserTests(unittest.TestCase):
         self.assertEqual(devices[0]["id"], "deviceabcdef")
         self.assertIsNone(devices[0]["paired"])
         self.assertIsNone(devices[0]["reachable"])
-
-
-class UpdaterSecurityTests(unittest.TestCase):
-    def test_update_rejects_http_url(self):
-        result = KDEckUpdater().update_from_url("http://github.com/BRiAn3274/KDEck/releases/download/v0.6.1/KDEck.zip", "a" * 64)
-
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"]["code"], "invalid_update_url")
-
-    def test_update_requires_sha256(self):
-        result = KDEckUpdater().update_from_url("https://github.com/BRiAn3274/KDEck/releases/download/v0.6.1/KDEck.zip")
-
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"]["code"], "missing_checksum")
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -553,7 +538,6 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
                 ":kdeck export logs",
                 ":kdeck share logs",
                 ":kdeck reset identity",
-                ":kdeck update <url>",
             },
         )
 
@@ -672,27 +656,13 @@ class ManagedDaemonStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("cleared", result["message"])
         self.assertFalse(backend.kde_receiver.trusted_path.exists())
 
-    async def test_hidden_update_requires_https_url_and_sha256(self):
+    async def test_hidden_update_command_is_not_available_in_store_build(self):
         backend = self.make_backend()
 
-        missing_sha = backend.run_hidden_command(":kdeck update https://github.com/BRiAn3274/KDEck/releases/download/v0.6.1/KDEck.zip")
-        bad_sha = backend.run_hidden_command(":kdeck update https://github.com/BRiAn3274/KDEck/releases/download/v0.6.1/KDEck.zip bad")
+        result = backend.run_hidden_command(":kdeck update https://github.com/BRiAn3274/KDEck/releases/download/v0.6.1/KDEck.zip " + "a" * 64)
 
-        self.assertFalse(missing_sha["ok"])
-        self.assertEqual(missing_sha["error"]["code"], "invalid_update_command")
-        self.assertFalse(bad_sha["ok"])
-        self.assertEqual(bad_sha["error"]["code"], "invalid_update_command")
-
-    async def test_hidden_update_passes_checksum_to_updater(self):
-        backend = self.make_backend()
-        checksum = "a" * 64
-        url = "https://github.com/BRiAn3274/KDEck/releases/download/v0.6.1/KDEck.zip"
-
-        with mock.patch.object(backend.updater, "update_from_url", return_value={"ok": True}) as update:
-            result = backend.run_hidden_command(f":kdeck update {url} {checksum}")
-
-        self.assertTrue(result["ok"])
-        update.assert_called_once_with(url, checksum)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "unknown_hidden_command")
 
     async def test_incoming_directory_uses_kdeck_receiver_directory(self):
         backend = self.make_backend()

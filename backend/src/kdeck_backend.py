@@ -8,7 +8,6 @@ This module is the single entry point used by main.py. It delegates to:
 - kdeck_network: interface discovery, IP sorting
 - kdeck_notebook: clipboard notebook persistence
 - kdeck_diagnostics: status checks, connection summary
-- kdeck_updater: hot-update with security
 - kdeck_kde_receiver: managed KDE Connect protocol receiver
 """
 
@@ -33,7 +32,6 @@ from kdeck_file_manager import KDEckFileManager
 from kdeck_kde_receiver import KDEckKdeReceiver
 from kdeck_network import KDEckNetwork
 from kdeck_notebook import KDEckNotebook
-from kdeck_updater import KDEckUpdater
 
 
 class KDEckBackend:
@@ -105,7 +103,6 @@ class KDEckBackend:
             logger=logger,
             run_fn=self._run,
         )
-        self.updater = KDEckUpdater(logger=logger)
 
     # ------------------------------------------------------------------
     # Status & diagnostics
@@ -370,7 +367,6 @@ class KDEckBackend:
             ":kdeck export logs": "Export redacted logs to Downloads.",
             ":kdeck share logs": "Export logs and explain why direct reverse sending is not used.",
             ":kdeck reset identity": "Clear KDEck managed KDE Connect identity and trusted-device data.",
-            ":kdeck update <url>": "Download and install a new KDEck.zip from URL. Use for rapid development.",
         }
         if normalized == ":kdeck help":
             return {"ok": True, "message": "\n".join(f"{name} - {desc}" for name, desc in commands.items()), "commands": commands}
@@ -399,11 +395,6 @@ class KDEckBackend:
             result = self.reset_managed_kde_identity()
             result["message"] = "KDEck identity and trusted-device data cleared. Restart KDEck and pair devices again." if result.get("ok") else "Failed to clear KDEck identity."
             return result
-        if normalized.startswith(":kdeck update "):
-            parts = command.strip()[len(":kdeck update "):].strip().split()
-            if len(parts) != 2 or not parts[0].startswith("https://") or len(parts[1]) != 64:
-                return self._error("invalid_update_command", "Usage: :kdeck update <https-url> <sha256-hex-64>")
-            return self.updater.update_from_url(parts[0], parts[1])
         return self._error("unknown_hidden_command", "Unknown hidden command.", command=command)
 
     # ------------------------------------------------------------------
@@ -650,6 +641,8 @@ class KDEckBackend:
                 daemon_failures += 1
                 if self.logger:
                     self.logger.warning("KDEck daemon watchdog detected daemon down (failure %d/3)", daemon_failures)
+                if self.loop is None:
+                    continue
                 # Fire-and-forget async restart from sync thread.
                 try:
                     future = asyncio.run_coroutine_threadsafe(self.daemon.auto_restart_daemon(), self.loop)
