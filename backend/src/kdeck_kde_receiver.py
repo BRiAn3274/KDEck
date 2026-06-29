@@ -1855,9 +1855,12 @@ class KDEckKdeReceiver:
                 state["completed"] = True
                 _report_progress(force=True)
                 try:
-                    tls_sock.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
+                    tls_sock.settimeout(2)
+                    tls_sock.unwrap()
+                    state["tls_closed"] = True
+                except (OSError, ssl.SSLError, socket.timeout) as exc:
+                    state["tls_close_error"] = str(exc)
+                    self.events.write_event("file_serve_tls_close_failed", {"file": str(file_path), "error": str(exc)})
             except OSError as exc:
                 self.events.write_event("file_serve_error", {"file": str(file_path), "error": str(exc)})
             finally:
